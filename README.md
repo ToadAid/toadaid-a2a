@@ -53,3 +53,13 @@ The [P0-WEB-01 publishing blueprint](docs/agent-web/p0-web-01-agent-native-publi
 - Validate static invariants and all existing tests: `python3 -m unittest discover -s tests -v`
 
 **NO ROUTES AUTHORIZED.** Neither the A2A Agent Card nor `/llms.txt`, `/siteai.json`, Markdown serving, lore JSON publishing, or actions are made public by this cut. P0B-C2 official TCK remains UNRUN.
+
+## P0-WEB-02 — local synthetic HTML/Markdown/JSON HTTP proof
+
+An explicitly started **127.0.0.1-only** fixture serves one fictional record with format parity across `Accept: text/html`, `text/markdown`, and `application/json`. It enforces a bounded Accept subset, no-store, `Vary: Accept`, private-field projection, refusal for mutation methods, and no live A2A routes.
+
+- [P0-WEB-02 scope, usage, qualification and limitations](docs/agent-web/p0-web-02-local-negotiation.md)
+- Run all tests: `python3 -m unittest discover -s tests -v`
+- Optional explicit developer-only server: `python3 -m agent_web.publishing_fixture --port 0`
+
+**NOT DEPLOYED. NOT PUBLIC. No actual lore records, registration, Agent Cards, `llms.txt`, `siteai.json`, or action endpoints are published.** P0B-C2 official TCK remains UNRUN.

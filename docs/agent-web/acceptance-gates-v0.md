@@ -78,3 +78,15 @@ See [P0-WEB-01 blueprint](p0-web-01-agent-native-publishing-blueprint.md) and [s
 - [x] Bind future actions to authenticated server-side policy, current exact-artifact grants, and separate human approval.
 - [ ] Qualify static plan tests in PR CI and exact-head squash merge with verified post-merge CI.
 - [ ] **Actual public route implementation, A2A conformance and deployment remain separately unapproved.**
+
+## P0-WEB-02 — controlled synthetic representation fixture
+
+See [P0-WEB-02 proof scope](p0-web-02-local-negotiation.md). **Local-only. NOT DEPLOYED.**
+
+- [x] Explicitly started loopback fixture for one non-canonical fictional record, not a real Lore Land.
+- [x] Render one allowlisted public-source projection as HTML, Markdown or JSON using a bounded Accept subset.
+- [x] HTTP status and header controls: Content-Type, Vary, no-store, noindex, CSP; negative malformed/oversized Accept and unknown routes.
+- [x] No server-side action processing, no mutation methods, no external fetch; test that accidental secret fields stay excluded.
+- [ ] Exact-head PR CI verifies all static and live-loopback tests.
+- [ ] Director reviews exact PR scope and squash merges only with green CI and post-merge proof.
+- [ ] Official A2A TCK, real Lore rights verification, public publishing, credentials and action authorization remain separate gates.
