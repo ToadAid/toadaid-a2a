@@ -1,0 +1,29 @@
+{
+  "kind": "toadaid-synthetic-lore-resource-example",
+  "status": "SYNTHETIC-NONCANONICAL-NOT-PUBLISHED",
+  "recordId": "example:fictional-garden-000",
+  "realDeed": false,
+  "canonicalLore": false,
+  "publicPublicationAuthorized": false,
+  "title": "Fictional Garden — Structure Example Only",
+  "summary": "Invented example used solely to demonstrate provenance and machine-readable structure.",
+  "representationContract": "toadaid-agent-native-publishing-plan/0.1.0",
+  "provenance": [
+    {
+      "classification": "imagined_visual",
+      "verification": "unverified",
+      "sourceId": null,
+      "sourceUrl": null,
+      "creatorIdentityVerified": false,
+      "chainOwnershipVerified": false,
+      "rightsVerified": false,
+      "note": "No real land, original lore, token, image, wallet, creator or chain ownership is asserted."
+    }
+  ],
+  "relatedResourceIds": [],
+  "claims": [
+    "This example is fictional; it does not describe an actual Tobyworld Lore Land."
+  ],
+  "privateDataIncluded": false,
+  "indexingAllowed": false
+}

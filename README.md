@@ -42,3 +42,14 @@ A separate Python client process discovers and talks to our explicitly started *
 - All safe, temporary localhost tests: `python3 -m unittest discover -s tests -v`
 
 **TCK NOT RUN. P0B remains incomplete. NOT DEPLOYED.** No production Agent Card, real Agent0 connection, agent registration, public networking, or new execution authority is created.
+
+## P0-WEB-01 — Agent-Native Publishing Blueprint (architecture only)
+
+The [P0-WEB-01 publishing blueprint](docs/agent-web/p0-web-01-agent-native-publishing-blueprint.md) proposes discovery, safe public lore publishing, HTML/Markdown/JSON content negotiation, source/rights provenance, and action/consent boundaries without changing the human Portal.
+
+- [Plan, architecture-only; NOT DEPLOYED](contracts/agent-web/publishing-plan.v0.json)
+- [Explicitly fictional sample record; never a real deed](contracts/agent-web/examples/synthetic-lore-resource.v0.json)
+- [Independent release gates](docs/agent-web/p0-web-01-acceptance-gates.md)
+- Validate static invariants and all existing tests: `python3 -m unittest discover -s tests -v`
+
+**NO ROUTES AUTHORIZED.** Neither the A2A Agent Card nor `/llms.txt`, `/siteai.json`, Markdown serving, lore JSON publishing, or actions are made public by this cut. P0B-C2 official TCK remains UNRUN.
