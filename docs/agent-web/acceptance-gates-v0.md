@@ -8,13 +8,24 @@
 - [x] Document Portal/A2A/MCP separation and inheritance from the canonical A2A architecture.
 - [x] Record non-live machine-readable topology and privacy/authority invariants.
 - [x] Introduce dependency-free tests and bounded PR CI.
-- [ ] Director verifies exact PR head, diff, base, CI and review status before merge.
+- [x] Director verified exact P0A PR #3 head, diff, base and successful CI before squash merge; post-merge CI green.
 
 **Acceptance evidence:** committed documents, topology, test suite, CI outcome, exact-head squash-merge receipt. No live service is asserted.
 
 ## P0B — read-only discovery, separate cut and authorization
 
-**P0B-A (this cut):** offline, bounded, no-network inspection of candidate A2A 1.0 card structure with negative tests; no published card, service or claim of endpoint availability. **P0B remains INCOMPLETE.** See [P0B-A](p0b-a-offline-discovery.md). The next P0B-B must pin the official upstream release and implement a real loopback-only binding with verified interfaces before any Agent Card is served.
+**P0B-A (completed in PR #4):** offline, bounded, no-network candidate A2A 1.0 card structural inspector with negative controls. No public service or claim of endpoint availability. See [P0B-A](p0b-a-offline-discovery.md).
+
+**P0B-B (this cut):** pinned upstream A2A v1.0.1 normative proto and specification source identity, implemented a real **127.0.0.1-only** JSON-RPC v1.0 `SendMessage` static acknowledgment probe with honest local Agent Card, private journal-before-delivery, bounded input, idempotent replay, single-writer lock and real socket negative tests. See [P0B-B limitations and evidence](p0b-b-loopback-probe.md).
+
+- [x] Local-only discovery and actual bounded JSON-RPC binding, without public endpoints, models or tools.
+- [x] Pin official upstream tag/commit plus normative proto and spec Git object identities.
+- [x] Developer-run 23-test local suite (including positive and negative protocol probes); CI qualification required on exact PR head.
+- [ ] **Official independent A2A TCK / SDK conformance** for pinned release; no claim of general A2A implementation compliance.
+- [ ] Complete real agent principal-bound journaling, identity/admission, revocation, privacy and operational safety review in separately authorized cuts.
+- [ ] Production Agent Card, DNS, tunnel and public exposure require a future explicit Director deployment gate.
+
+**P0B remains INCOMPLETE.** P0B-B is a bounded local proof, not a gateway activation.
 
 - Review a pinned, current A2A specification and official Agent Card schema.
 - Implement a **local-only** read-only discovery prototype, with honest advertised skills, supported interfaces, and no fake public endpoint.
