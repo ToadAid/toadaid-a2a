@@ -2,7 +2,7 @@
 
 Sovereign Agent-to-Agent conversation, task, authority, and evidence protocol for ToadAid.
 
-This repository is intentionally bootstrapped documentation-first. The architecture is governed by reviewed specifications before implementation code is introduced.
+This repository is architecture-first. The existing canonical constitution governs the small, local-only development prototypes; no production A2A gateway is deployed.
 
 ## Architecture documents
 
@@ -22,3 +22,13 @@ The [Agent-Native Web foundation](docs/agent-web/foundation-v0.md) defines the p
 ## P0B-A — offline Agent Card inspector (local-only)
 
 Run `python3 -m agent_web.card_inspector LOCAL_CARD.json` to inspect A2A 1.0 public-candidate card *structure* without network access. Read [P0B-A limitations and evidence](docs/agent-web/p0b-a-offline-discovery.md). A passing inspector result **does not** confirm conformance, endpoint availability, skill support, or authorization to publish. P0B remains incomplete.
+
+## P0B-B — localhost JSON-RPC fixed-response probe
+
+A **separately started, localhost-only** A2A v1.0 JSON-RPC `SendMessage` probe now serves an honest local Agent Card and one fixed-response skill. It is NOT Agent0, not externally reachable by design, and does not grant execution authority. Its input hash and output are journaled privately before delivery; no models, MCP tools, Portal registration, wallets, external endpoints or protected host operations are used.
+
+- [P0B-B protocol pin, limitations, instructions and tests](docs/agent-web/p0b-b-loopback-probe.md)
+- [Upstream release v1.0.1 pin](contracts/agent-web/a2a-upstream-v1.0.1.json)
+- Run the local test suite with `python3 -m unittest discover -s tests -v`.
+
+**NOT DEPLOYED.** Full P0B acceptance and independent official A2A conformance remain separate gates. Do not publicly serve the test Agent Card or reuse its loopback URL as a production interface.
