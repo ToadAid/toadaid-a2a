@@ -90,3 +90,19 @@ See [P0-WEB-02 proof scope](p0-web-02-local-negotiation.md). **Local-only. NOT D
 - [ ] Exact-head PR CI verifies all static and live-loopback tests.
 - [ ] Director reviews exact PR scope and squash merges only with green CI and post-merge proof.
 - [ ] Official A2A TCK, real Lore rights verification, public publishing, credentials and action authorization remain separate gates.
+
+## P0B-C2A — manually gated official TCK runner preparation
+
+See [P0B-C2A qualification plan](p0b-c2a-manual-tck-harness.md). **Runner prep only; official TCK NOT RUN.**
+
+- [x] Prepare explicit `workflow_dispatch` for main with guarded acknowledgement; no automatic PR/push execution.
+- [x] Freeze and verify official TCK upstream commit, tree, runner, project and dependency-lock Git object identities before installation.
+- [x] Require GitHub-hosted disposable runner, no persistent checkout credentials, no production host, real data or tools.
+- [x] Use the current bounded synthetic loopback A2A probe, run upstream JSON-RPC MUST tests, retain raw compatibility reports and failure status.
+- [x] Fail closed on TCK nonzero exit, missing reports, empty/all-skipped suites, errors and failures; no test bypass or green-only report.
+- [ ] Director separately authorizes manual dispatch on main and verifies the authentic Actions run and collected evidence.
+- [ ] Official upstream TCK results reviewed and mandatory failures classified; this gate is NOT complete.
+- [ ] External SDK interoperability, SHOULD/MAY and full protocol conformance remain separately unproven.
+- [ ] Any production Agent Card, identity admission, host or public networking separately authorized.
+
+**No effect on P0B-C2's pending conformance status or P0E deployment gate.**
