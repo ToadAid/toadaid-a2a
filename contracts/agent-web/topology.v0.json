@@ -1,0 +1,54 @@
+{
+  "kind": "toadaid-agent-web-topology",
+  "version": "0.1.0",
+  "status": "planned-not-deployed",
+  "wireProtocol": false,
+  "surfaces": {
+    "portal": {
+      "origin": "https://portal.toadaid.org",
+      "audience": "human",
+      "purpose": [
+        "registration",
+        "observatory"
+      ]
+    },
+    "agent": {
+      "origin": "https://agent.toadaid.org",
+      "audience": "machine",
+      "purpose": [
+        "a2a-discovery",
+        "bounded-a2a-conversation"
+      ],
+      "proposedWellKnownAgentCard": "/.well-known/agent-card.json"
+    },
+    "mcp": {
+      "origin": "https://mcp.toadaid.org",
+      "audience": "authorized-tool-client",
+      "purpose": [
+        "governed-knowledge-tools"
+      ]
+    }
+  },
+  "observatory": {
+    "proposedPath": "/agents",
+    "visibilityClasses": [
+      "public",
+      "community",
+      "operator"
+    ],
+    "privateByDefault": true,
+    "rawPrivateJournalsPublished": false
+  },
+  "authority": {
+    "chatGrantsExecution": false,
+    "identityGrantsCapability": false,
+    "registrationGrantsToolAuthority": false,
+    "executionNeedsSeparateCurrentGrant": true,
+    "walletRequiredForPublicLore": false
+  },
+  "release": {
+    "publicExposureAuthorized": false,
+    "hostMutationAuthorized": false,
+    "agentRegistrationActive": false
+  }
+}
