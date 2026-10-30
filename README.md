@@ -63,3 +63,13 @@ An explicitly started **127.0.0.1-only** fixture serves one fictional record wit
 - Optional explicit developer-only server: `python3 -m agent_web.publishing_fixture --port 0`
 
 **NOT DEPLOYED. NOT PUBLIC. No actual lore records, registration, Agent Cards, `llms.txt`, `siteai.json`, or action endpoints are published.** P0B-C2 official TCK remains UNRUN.
+
+## P0B-C2A — Official A2A TCK manual qualification harness
+
+The [P0B-C2A readiness contract](docs/agent-web/p0b-c2a-manual-tck-harness.md) prepares a **manually triggered** pinned official upstream TCK run against our explicitly started synthetic `127.0.0.1` A2A probe on a disposable GitHub-hosted runner. It is **not run by PR/push CI**, and does not touch Dell, TNG, Portal, MCP, Agent0 or any deployed service.
+
+- [Manual-only qualification workflow](.github/workflows/manual-a2a-tck-qualification.yml) — separate Director authorization required to dispatch.
+- [Raw evidence classifier](tools/tck_qualification_receipt.py) — keeps failed/empty/all-skipped reports at HOLD.
+- [Already-frozen upstream TCK pin](contracts/agent-web/a2a-tck-pin-20261030.json).
+
+**OFFICIAL TCK NOT RUN.** No full A2A certification, external SDK proof, production endpoint or deployment authority is asserted by this cut.
