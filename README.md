@@ -18,3 +18,7 @@ The [Agent-Native Web foundation](docs/agent-web/foundation-v0.md) defines the p
 - Validate with `python3 -m unittest discover -s tests -v`
 
 **Status: NOT DEPLOYED.** The topology is not an A2A Agent Card, registry API, authorization grant, hosted endpoint, or assertion that any service is live. A2A chat has no execution authority; all deployment and protected-host work requires a separate Director ruling.
+
+## P0B-A — offline Agent Card inspector (local-only)
+
+Run `python3 -m agent_web.card_inspector LOCAL_CARD.json` to inspect A2A 1.0 public-candidate card *structure* without network access. Read [P0B-A limitations and evidence](docs/agent-web/p0b-a-offline-discovery.md). A passing inspector result **does not** confirm conformance, endpoint availability, skill support, or authorization to publish. P0B remains incomplete.

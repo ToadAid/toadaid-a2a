@@ -14,6 +14,8 @@
 
 ## P0B — read-only discovery, separate cut and authorization
 
+**P0B-A (this cut):** offline, bounded, no-network inspection of candidate A2A 1.0 card structure with negative tests; no published card, service or claim of endpoint availability. **P0B remains INCOMPLETE.** See [P0B-A](p0b-a-offline-discovery.md). The next P0B-B must pin the official upstream release and implement a real loopback-only binding with verified interfaces before any Agent Card is served.
+
 - Review a pinned, current A2A specification and official Agent Card schema.
 - Implement a **local-only** read-only discovery prototype, with honest advertised skills, supported interfaces, and no fake public endpoint.
 - Negative tests: malformed/oversized cards, invalid fields, false advertising, unexpected writes, private metadata leakage.
