@@ -16,16 +16,22 @@
 
 **P0B-A (completed in PR #4):** offline, bounded, no-network candidate A2A 1.0 card structural inspector with negative controls. No public service or claim of endpoint availability. See [P0B-A](p0b-a-offline-discovery.md).
 
-**P0B-B (this cut):** pinned upstream A2A v1.0.1 normative proto and specification source identity, implemented a real **127.0.0.1-only** JSON-RPC v1.0 `SendMessage` static acknowledgment probe with honest local Agent Card, private journal-before-delivery, bounded input, idempotent replay, single-writer lock and real socket negative tests. See [P0B-B limitations and evidence](p0b-b-loopback-probe.md).
+**P0B-B (completed in PR #5):** pinned upstream A2A v1.0.1 normative proto and specification source identity, implemented a real **127.0.0.1-only** JSON-RPC v1.0 `SendMessage` static acknowledgment probe with honest local Agent Card, private journal-before-delivery, bounded input, idempotent replay, single-writer lock and real socket negative tests. See [P0B-B limitations and evidence](p0b-b-loopback-probe.md).
 
 - [x] Local-only discovery and actual bounded JSON-RPC binding, without public endpoints, models or tools.
 - [x] Pin official upstream tag/commit plus normative proto and spec Git object identities.
-- [x] Developer-run 25-test local suite (including positive and negative protocol probes); CI qualification required on exact PR head.
-- [ ] **Official independent A2A TCK / SDK conformance** for pinned release; no claim of general A2A implementation compliance.
+- [x] P0B-B 25 local tests plus PR and post-merge CI passed; does not confer official A2A conformance.
+**P0B-C1 (this cut):** separate-process, standard-library client reads the actual loopback Agent Card and exchanges real JSON-RPC with the separately spawned P0B-B server; tests refusal of advertised capabilities and remote URLs. Official TCK source commit, runner and `uv.lock` Git object identities are frozen in [P0B-C1](p0b-c1-interop-tck-readiness.md). This is **same-repository independent-process smoke only**, not independent upstream conformance.
+
+- [x] P0B-C1 client and negative tests added; PR CI still must qualify exact head.
+- [x] Pin upstream TCK source and dependency lockfile (source identification only).
+- [ ] **Official independent A2A TCK MUST/SHOULD/MAY suite NOT RUN**; official compatibility NOT established.
+- [ ] **Independently maintained A2A SDK client NOT RUN** against this probe; do not claim external SDK interoperability.
+- [ ] Resolve TCK mandatory failures, unsupported methods and protocol semantics before any general-conformance statement.
 - [ ] Complete real agent principal-bound journaling, identity/admission, revocation, privacy and operational safety review in separately authorized cuts.
 - [ ] Production Agent Card, DNS, tunnel and public exposure require a future explicit Director deployment gate.
 
-**P0B remains INCOMPLETE.** P0B-B is a bounded local proof, not a gateway activation.
+**P0B remains INCOMPLETE.** P0B-B and P0B-C1 are bounded local proofs; neither authorizes gateway activation.
 
 - Review a pinned, current A2A specification and official Agent Card schema.
 - Implement a **local-only** read-only discovery prototype, with honest advertised skills, supported interfaces, and no fake public endpoint.

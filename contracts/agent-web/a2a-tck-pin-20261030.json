@@ -1,0 +1,24 @@
+{
+  "purpose": "P0B-C1 official A2A TCK source and future invocation pin. No execution or certification claim.",
+  "upstream": "a2aproject/a2a-tck",
+  "pinnedCommit": "d4d6fae7887f88ef607fb461c13e3b0e1802f19b",
+  "gitTreeSha1": "8469eb8aa083c027aa00a3107972b1787dc6671a",
+  "runnerPath": "run_tck.py",
+  "runnerGitBlobSha1": "06f70520f89c2bb60e1f752694781141568ad08b",
+  "dependencyLockPath": "uv.lock",
+  "dependencyLockGitBlobSha1": "9c17390a1441fb70d798baa8f4e71bc24fe95cdb",
+  "projectPath": "pyproject.toml",
+  "projectGitBlobSha1": "3bb6059dbd68d3ce9e2dd01776077adebc7c5577",
+  "verifiedOn": "2026-10-30",
+  "officialTckExecuted": false,
+  "officialMustConformancePassed": false,
+  "externalSdkInteroperabilityRun": false,
+  "fullA2AConformanceClaimed": false,
+  "productionAuthorized": false,
+  "reasonsHeld": [
+    "Fixed-response P0B-B local probe intentionally rejects task operations and valid non-subset input",
+    "Official upstream TCK full MUST-level test suite has not been executed",
+    "No external A2A SDK client interoperability run",
+    "No real agent ownership/admission/revocation, public endpoint, or privacy approval"
+  ]
+}

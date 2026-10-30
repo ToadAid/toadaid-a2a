@@ -32,3 +32,13 @@ A **separately started, localhost-only** A2A v1.0 JSON-RPC `SendMessage` probe n
 - Run the local test suite with `python3 -m unittest discover -s tests -v`.
 
 **NOT DEPLOYED.** Full P0B acceptance and independent official A2A conformance remain separate gates. Do not publicly serve the test Agent Card or reuse its loopback URL as a production interface.
+
+## P0B-C1 — independent-process client smoke and official TCK readiness
+
+A separate Python client process discovers and talks to our explicitly started **localhost-only** fixture without importing its server code. This is a narrow, controlled interoperability smoke, **not** an external SDK or official TCK conformance result.
+
+- [P0B-C1 evidence, TCK pin and limitations](docs/agent-web/p0b-c1-interop-tck-readiness.md)
+- [Pinned official TCK source and lockfile](contracts/agent-web/a2a-tck-pin-20261030.json)
+- All safe, temporary localhost tests: `python3 -m unittest discover -s tests -v`
+
+**TCK NOT RUN. P0B remains incomplete. NOT DEPLOYED.** No production Agent Card, real Agent0 connection, agent registration, public networking, or new execution authority is created.
