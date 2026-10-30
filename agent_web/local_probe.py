@@ -46,7 +46,9 @@ def _parse(raw):
     try:
         return json.loads(raw.decode("utf-8"), object_pairs_hook=_json_no_duplicates,
                           parse_constant=lambda _: (_ for _ in ()).throw(Refusal("non-finite JSON number")))
-    except (UnicodeError, json.JSONDecodeError) as exc:
+    except Refusal:
+        raise
+    except (UnicodeError, json.JSONDecodeError, ValueError, RecursionError) as exc:
         raise Refusal("invalid JSON") from exc
 
 

@@ -20,7 +20,7 @@
 
 - [x] Local-only discovery and actual bounded JSON-RPC binding, without public endpoints, models or tools.
 - [x] Pin official upstream tag/commit plus normative proto and spec Git object identities.
-- [x] Developer-run 23-test local suite (including positive and negative protocol probes); CI qualification required on exact PR head.
+- [x] Developer-run 25-test local suite (including positive and negative protocol probes); CI qualification required on exact PR head.
 - [ ] **Official independent A2A TCK / SDK conformance** for pinned release; no claim of general A2A implementation compliance.
 - [ ] Complete real agent principal-bound journaling, identity/admission, revocation, privacy and operational safety review in separately authorized cuts.
 - [ ] Production Agent Card, DNS, tunnel and public exposure require a future explicit Director deployment gate.

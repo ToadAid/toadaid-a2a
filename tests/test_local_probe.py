@@ -194,6 +194,20 @@ class RealLoopbackTests(unittest.TestCase):
         with self.assertRaises(OSError):
             Journal(self.dir)
 
+    def test_extreme_numeric_json_refused_not_crash(self):
+        raw = b'{"jsonrpc":"2.0","id":' + b'9' * 5000 + b',"method":"SendMessage"}'
+        status, _, result = self.call("POST", RPC_PATH, raw,
+                                      {"Content-Type": "application/json", "A2A-Version": "1.0"})
+        self.assertEqual(status, 400)
+        self.assertIn("error", result)
+
+    def test_excessive_json_nesting_refused_not_crash(self):
+        raw = b'[' * 1300 + b'0' + b']' * 1300
+        status, _, result = self.call("POST", RPC_PATH, raw,
+                                      {"Content-Type": "application/json", "A2A-Version": "1.0"})
+        self.assertEqual(status, 400)
+        self.assertIn("error", result)
+
     def test_bad_json_id_no_journal(self):
         x = req()
         x["id"] = True
