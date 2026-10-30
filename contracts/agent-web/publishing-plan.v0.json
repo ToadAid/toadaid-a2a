@@ -1,0 +1,101 @@
+{
+  "kind": "toadaid-agent-native-publishing-plan",
+  "planVersion": "0.1.0",
+  "status": "architecture-only-not-deployed",
+  "wireProtocol": false,
+  "serviceActive": false,
+  "domains": {
+    "humanPortal": "https://portal.toadaid.org",
+    "agentNative": "https://agent.toadaid.org",
+    "governedTools": "https://mcp.toadaid.org"
+  },
+  "discovery": [
+    {
+      "kind": "a2a-agent-card",
+      "candidatePath": "/.well-known/agent-card.json",
+      "classification": "standard-a2a-discovery",
+      "publishAuthorized": false,
+      "requiresQualifiedLiveEndpoint": true,
+      "confersAuthorization": false
+    },
+    {
+      "kind": "llms-index",
+      "candidatePath": "/llms.txt",
+      "classification": "optional-convention",
+      "publishAuthorized": false,
+      "confersAuthorization": false
+    },
+    {
+      "kind": "siteai-policy",
+      "candidatePath": "/siteai.json",
+      "classification": "experimental-draft",
+      "publishAuthorized": false,
+      "confersAuthorization": false
+    }
+  ],
+  "representations": {
+    "status": "planned-only",
+    "canonicalSourceRequired": true,
+    "sameFactsAcrossRepresentations": true,
+    "contentNegotiation": {
+      "browser": {
+        "accept": "text/html",
+        "responseContentType": "text/html; charset=utf-8"
+      },
+      "reader": {
+        "accept": "text/markdown",
+        "responseContentType": "text/markdown; charset=utf-8"
+      },
+      "structured": {
+        "accept": "application/json",
+        "responseContentType": "application/json; charset=utf-8"
+      },
+      "varyHeader": "Accept",
+      "cacheMustPartitionByRepresentation": true,
+      "privateCacheMustPartitionByAuthorization": true,
+      "noUserAgentSniffing": true
+    }
+  },
+  "content": {
+    "publicationDefault": "withhold-until-approved",
+    "classificationValues": [
+      "original_lore",
+      "onchain_metadata",
+      "community_creation",
+      "imagined_visual",
+      "editorial_summary"
+    ],
+    "verificationValues": [
+      "verified",
+      "unverified"
+    ],
+    "publicProvenanceRequired": true,
+    "rightsReviewRequired": true,
+    "privateJournalExportAllowed": false,
+    "privatePromptExportAllowed": false,
+    "syntheticExample": "contracts/agent-web/examples/synthetic-lore-resource.v0.json"
+  },
+  "actions": {
+    "status": "not-implemented",
+    "defaultPolicy": "deny",
+    "requestIsGrant": false,
+    "agentCardGrantsExecution": false,
+    "discoveryFileGrantsExecution": false,
+    "chatGrantsExecution": false,
+    "signedIdentityGrantsExecution": false,
+    "executionRequiresCurrentExactGrant": true,
+    "approvalViaChatAllowed": false,
+    "tenantDerivedFromTrustedServer": true,
+    "serverEnforcementRequired": true
+  },
+  "release": {
+    "agentCardPublished": false,
+    "llmsIndexPublished": false,
+    "siteaiPolicyPublished": false,
+    "markdownServingEnabled": false,
+    "loreRecordsPublished": false,
+    "actionsEnabled": false,
+    "officialTckExecuted": false,
+    "productionDeploymentAuthorized": false
+  }
+}

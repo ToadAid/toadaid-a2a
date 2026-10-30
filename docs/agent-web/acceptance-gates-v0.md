@@ -66,3 +66,15 @@ STOP on missing evidence, unexpected repository changes, identity/permission amb
 ## Deferred decision
 
 A public GitHub repository is not automatically open-source licensed. Licensing of this repository's existing contributions requires a separate documented maintainer decision before we invite external reuse under a named license.
+
+## P0-WEB-01 — proposed Agent-Native publishing surface (parallel documentation cut)
+
+See [P0-WEB-01 blueprint](p0-web-01-agent-native-publishing-blueprint.md) and [separate acceptance gates](p0-web-01-acceptance-gates.md). This is **architecture-only; NOT DEPLOYED** and does not supersede P0B-C2, P0C or P0E.
+
+- [x] Specify machine-native discovery plan distinct from human Portal and governed MCP.
+- [x] Explicitly classify A2A Agent Card, optional `llms.txt`, experimental `siteai.json`; no discovery document confers authorization.
+- [x] Specify same-source HTML/Markdown/JSON variants, `Accept` negotiation and safe `Vary: Accept` caching.
+- [x] Specify copyright/rights, provenance classification, non-canonical synthetic sample and no private journal export.
+- [x] Bind future actions to authenticated server-side policy, current exact-artifact grants, and separate human approval.
+- [ ] Qualify static plan tests in PR CI and exact-head squash merge with verified post-merge CI.
+- [ ] **Actual public route implementation, A2A conformance and deployment remain separately unapproved.**
