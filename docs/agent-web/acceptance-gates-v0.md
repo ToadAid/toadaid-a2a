@@ -106,3 +106,17 @@ See [P0B-C2A qualification plan](p0b-c2a-manual-tck-harness.md). **Runner prep o
 - [ ] Any production Agent Card, identity admission, host or public networking separately authorized.
 
 **No effect on P0B-C2's pending conformance status or P0E deployment gate.**
+
+## P0B-C2B — Director gate diagnostic repair (no TCK execution)
+
+The first manual attempt (Actions run #41118047825) was **SKIPPED**. Main ref was correct; the exact submitted input was not exposed, so the input mismatch remains an inference, not confirmed fact.
+
+- [x] Move branch and exact Director approval checking to the first executable step, before checkout/dependencies.
+- [x] Failed/invalid input produces a visible, red, generic refusal without echoing input values; wrong ref also refuses.
+- [x] Keep manual-only dispatch, read-only permissions, pinned upstream sources, ephemeral loopback server and unchanged TCK command.
+- [x] If gate is denied, do not upload nonexistent evidence; if approved but TCK fails, preserve raw reports and nonzero status.
+- [x] Add synthetic negative tests for empty/incorrect/whitespace approval and non-main ref; no official TCK in PR CI.
+- [ ] Exact-head PR CI and review; guarded squash merge; post-merge CI confirmation.
+- [ ] New separately authorized manual trial with unmodified upstream reports. **Official TCK NOT RUN yet.**
+
+**A green gate check is not an A2A conformance claim, tool approval or deployment grant.**

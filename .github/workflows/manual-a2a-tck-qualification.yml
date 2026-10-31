@@ -14,7 +14,6 @@ permissions:
 
 jobs:
   pinned-must-suite:
-    if: ${{ github.ref == 'refs/heads/main' && inputs.director_gate == 'RUN_PINNED_TCK_LOCAL_ONLY' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -22,6 +21,24 @@ jobs:
       UV_NO_PROGRESS: "1"
       PYTHONUNBUFFERED: "1"
     steps:
+      # A denied launch must fail visibly *before* checkout or third-party code.
+      # Input is passed through the environment, not interpolated into bash.
+      - name: Validate Director authorization before all other work
+        id: director-gate
+        shell: bash
+        env:
+          DIRECTOR_GATE: ${{ inputs.director_gate }}
+        run: |
+          set -uo pipefail
+          if test "$GITHUB_REF" != 'refs/heads/main'; then
+            echo '::error title=Director gate refused::Select protected main. No TCK executed.'
+            exit 1
+          fi
+          if test "${DIRECTOR_GATE-}" != 'RUN_PINNED_TCK_LOCAL_ONLY'; then
+            echo '::error title=Director gate refused::The approval text must match exactly. No TCK executed.'
+            exit 1
+          fi
+          echo 'Director gate validated on main. Local test preparation may begin.'
       - name: Checkout protected main without persisted credentials
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -120,7 +137,9 @@ jobs:
             wait "$pid" 2>/dev/null || :
           fi
       - name: Preserve raw compatibility evidence even on failure
-        if: always()
+        # On denied launches no TCK work occurred, so no artifact should be made.
+        # On *authorized* failed TCK, upload unmodified raw failure evidence.
+        if: ${{ always() && steps.director-gate.outcome == 'success' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: a2a-tck-p0b-c2a-local-raw-evidence
