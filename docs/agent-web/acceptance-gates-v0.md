@@ -135,3 +135,20 @@ See [P0-WEB-03A provenance and rights gates](p0-web-03a-lore-source-inventory.md
 - [ ] **P0B-C2:** official A2A TCK and **P0E:** deployment remain separate gates.
 
 **Public GitHub accessibility is not an automatic redistribution license.**
+
+## P0-WEB-03B1 — rights packet intake and non-admission classifier
+
+See [P0-WEB-03B1 review contract](p0-web-03b1-lore-rights-review.md). This is an offline **review readiness** tool; no grant.
+
+- [x] Define strict versioned request schema for exact source generation, audience, field and record scope, and rights evidence references.
+- [x] Synthetic example contains no real lore, creator approvals, chain ownership or media binary.
+- [x] Classify independently held, disputed, restricted, self-asserted public-domain and permission claims without ever granting publication.
+- [x] Bind request to exact canonical source inventory metadata; a matching pair of local files is **not** proof of authenticity.
+- [x] Distinguish metadata, original lore text, media references and media binaries; binary media always independently held.
+- [x] Reject missing fields, unknown release flags, malformed/duplicate scope, wrong source digest, missing human evidence and untrusted origins.
+- [x] Offline, stdlib-only synthetic tests; output redacts submitted proof refs and record identifiers.
+- [ ] Exact-head PR/CI qualification, guarded squash merge, verified main and post-merge CI.
+- [ ] Separate independent **P0-WEB-03B2** legal/rights/attribution/consent review before any real content export.
+- [ ] Official A2A TCK **NOT RUN**; public deployment/Agent Card **NOT AUTHORIZED**.
+
+**Neither a chat message nor a valid JSON review packet can grant republication rights.**

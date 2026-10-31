@@ -88,3 +88,13 @@ The [P0-WEB-03A local source-bound inventory](docs/agent-web/p0-web-03a-lore-sou
 - [Reader-aligned provenance, rights, media and future release gates](docs/agent-web/p0-web-03a-lore-source-inventory.md)
 
 **RIGHTS UNKNOWN · NO REAL LORE EXPORTED · NOT DEPLOYED.** The separate official A2A TCK execution remains outstanding.
+
+## P0-WEB-03B1 — offline lore rights review intake, publication HOLD
+
+The [rights review intake](docs/agent-web/p0-web-03b1-lore-rights-review.md) receives only a **private local, untrusted review request** bound to a matching canonical-source inventory. It reports missing scope/evidence or readiness **for an independent human review**, never publishing rights or approval.
+
+- [Versioned shape of proposed rights review packet](contracts/agent-web/lore-rights-review-request.v0.schema.json)
+- [Clearly fictional, unapproved packet](contracts/agent-web/examples/synthetic-lore-rights-request.v0.json)
+- Offline classifier: `python3 -m agent_web.lore_rights_review --packet PRIVATE_PACKET --inventory PRIVATE_INVENTORY`.
+
+**ALL PUBLICATION FLAGS ALWAYS FALSE.** This cut does not export original Tobyworld text/media or create public agent endpoints, rights approval, protocol conformance or production deployments. Real rights remain **UNKNOWN** pending independent review; official A2A TCK remains UNRUN.
