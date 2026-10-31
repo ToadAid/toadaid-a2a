@@ -1,0 +1,29 @@
+{
+  "kind": "toadaid-lore-human-review-handoff",
+  "schemaVersion": "0.1.0",
+  "binding": {
+    "packetSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "sourceDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "sourceGitBlobSha1": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "review": {
+    "caseRef": "synthetic-case-do-not-review",
+    "stage": "awaiting-independent-review",
+    "decisionChannel": "independent-off-chat-human-process",
+    "evidenceRefs": {
+      "reviewerIdentityEvidenceRef": null,
+      "reviewerIndependenceEvidenceRef": null,
+      "rightsChainEvidenceRef": null,
+      "scopePermissionEvidenceRef": null,
+      "attributionEvidenceRef": null,
+      "privacyEvidenceRef": null,
+      "withdrawalEvidenceRef": null,
+      "conflictDisclosureEvidenceRef": null,
+      "mediaEvidenceRef": null
+    },
+    "objectionCodes": [
+      "SOURCE_IDENTITY",
+      "RIGHTS_CHAIN"
+    ]
+  }
+}

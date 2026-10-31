@@ -152,3 +152,18 @@ See [P0-WEB-03B1 review contract](p0-web-03b1-lore-rights-review.md). This is an
 - [ ] Official A2A TCK **NOT RUN**; public deployment/Agent Card **NOT AUTHORIZED**.
 
 **Neither a chat message nor a valid JSON review packet can grant republication rights.**
+
+## P0-WEB-03B2A — source/scope-bound human-review handoff; NO LEGAL DECISION
+
+See [P0-WEB-03B2A review handoff](p0-web-03b2a-human-review-handoff.md). This is a structural, read-only local aid and **does not** fulfill real human rights review.
+
+- [x] Bind local docket to exact B1 request SHA-256 and inventory-derived source Git blob/source digest; preserve B1 HOLD.
+- [x] Separate reviewer identity and independence, rights chain, exact permission scope, attribution, privacy, withdrawal, conflicts and media evidence refs.
+- [x] Preserve unresolved objections and explicitly refuse claimed `approved`/`published` states, withdrawn or declined cases and agent-chat decision channels.
+- [x] Outputs redact private names/IDs/evidence and cannot mark rights, legal decisions, publication, rehosting or deployment as authorized.
+- [x] Synthetic tests cover changed scope/source digests, self-asserted evidence, missing refs, conflicting scope, media, withdrawal and consent/approval smuggling.
+- [ ] Verify PR CI on exact head, seven-file scope and post-merge CI.
+- [ ] **P0-WEB-03B2B:** actual independent rightsholder/custodian and human-reviewed attributable, revocable decisions made **outside agent chat**; real evidence not placed in public repo.
+- [ ] **P0B-C2:** actual official TCK run; **P0E:** independent production deployment approval.
+
+**Even a complete-looking human-review docket is untrusted; review readiness does not grant permission.**
