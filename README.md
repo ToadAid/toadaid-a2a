@@ -79,3 +79,12 @@ The [P0B-C2A readiness contract](docs/agent-web/p0b-c2a-manual-tck-harness.md) p
 The [P0B-C2A runbook](docs/agent-web/p0b-c2a-manual-tck-harness.md#p0b-c2b-gate-diagnostics--first-launch-refused-2026-10-30) records the first manual run as **SKIPPED** (no TCK tests executed). The manual workflow now verifies branch and exact Director approval as the first executable step, reporting a clear refusal instead of silently skipping the job. Negative tests exercise accepted and denied gate values. GitHub PR and push CI still do **not** dispatch the official TCK.
 
 **Official TCK NOT RUN.** Next manual dispatch requires a separate Director action after merge qualification; no production or agent-facing endpoints are affected.
+
+## P0-WEB-03A — canonical Tobyworld lore source inventory (rights HOLD)
+
+The [P0-WEB-03A local source-bound inventory](docs/agent-web/p0-web-03a-lore-source-inventory.md) acknowledges that `ToadAid/toadaid.github.io/lore/data.json` is the **single canonical authored lore source**. It observes 132 records at a reviewed Git commit without copying lore text or claiming republication rights. The new **read-only, offline** `python3 -m agent_web.lore_provenance --canonical-repo LOCAL_CHECKOUT --commit REVIEWED_SHA` reports source metadata only.
+
+- [Observed source identity and publication HOLD](contracts/agent-web/lore-source-inventory.v0.json)
+- [Reader-aligned provenance, rights, media and future release gates](docs/agent-web/p0-web-03a-lore-source-inventory.md)
+
+**RIGHTS UNKNOWN · NO REAL LORE EXPORTED · NOT DEPLOYED.** The separate official A2A TCK execution remains outstanding.

@@ -120,3 +120,18 @@ The first manual attempt (Actions run #41118047825) was **SKIPPED**. Main ref wa
 - [ ] New separately authorized manual trial with unmodified upstream reports. **Official TCK NOT RUN yet.**
 
 **A green gate check is not an A2A conformance claim, tool approval or deployment grant.**
+
+## P0-WEB-03A — canonical lore source binding, metadata only
+
+See [P0-WEB-03A provenance and rights gates](p0-web-03a-lore-source-inventory.md). No real public publishing is authorized.
+
+- [x] Inspect Lore Reader's permanent canonical source identity, exact-commit importer, ID preservation and archive-date semantics.
+- [x] Observe canonical `lore/data.json` at an explicit, generation-specific public commit (132 records) without vendoring original content.
+- [x] Provide an offline read-only Git-object inventory emitting SHA-256 and bounded record counts, **not** lore text, images, rights grants or publication endpoints.
+- [x] Refuse duplicate IDs, invalid source records, unreviewed object identifiers and altered origin strings; tests use synthetic local Git data.
+- [x] Explicitly mark text/media rights as unknown and public exports as forbidden until documented rights and provenance review.
+- [ ] Exact-head PR CI, scope review, squash merge and post-merge CI verified.
+- [ ] **P0-WEB-03B:** independent provenance/rights/admission before real content export.
+- [ ] **P0B-C2:** official A2A TCK and **P0E:** deployment remain separate gates.
+
+**Public GitHub accessibility is not an automatic redistribution license.**

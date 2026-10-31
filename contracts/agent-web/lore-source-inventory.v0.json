@@ -1,0 +1,54 @@
+{
+  "kind": "toadaid-public-lore-source-inventory-evidence",
+  "schemaVersion": "0.1.0",
+  "status": "OBSERVED_SOURCE_ONLY_PUBLICATION_HOLD",
+  "observedOn": "2026-10-30",
+  "fixedCanonicalRepository": "ToadAid/toadaid.github.io",
+  "fixedCanonicalPath": "lore/data.json",
+  "generationSpecificObservation": {
+    "reviewedCommitForObservationOnly": "40ed594230395eafe6f233d1b27855181ec8dffe",
+    "sourceGitBlobSha1": "b81d32c951d754780ac310e38b81a17f21292fe1",
+    "observedRecordCount": 132,
+    "observedRecordFields": [
+      "id",
+      "date",
+      "title",
+      "original",
+      "comment",
+      "url",
+      "img",
+      "tags"
+    ],
+    "thisObservationIsPermanentPin": false,
+    "sha256SourceDigestVerifiedHere": false
+  },
+  "authority": {
+    "canonicalContentDerivedFrom": "exact-reviewed-Git-commit-object-only",
+    "sourceOriginStringProvesAuthenticity": false,
+    "publicAccessibilityProvesRepublicationRights": false,
+    "rightsStatus": "unknown",
+    "rightsReviewed": false,
+    "publicTextExportAuthorized": false,
+    "publicMediaExportAuthorized": false,
+    "commercialReuseAuthorized": false,
+    "ownerRightsOrAuthorshipAsserted": false,
+    "productionDeploymentAuthorized": false
+  },
+  "provenanceBoundaries": {
+    "canonicalRecordIdMustStayStable": true,
+    "archiveDateMustNotBeCalledPublishedAt": true,
+    "originalAndCommentMustRemainSeparate": true,
+    "legacyImageReferenceProvesPreservation": false,
+    "imageRightsRequireSeparateReview": true,
+    "noExternalFetchInInventoryTool": true,
+    "sourceGenerationChangeRequiresReview": true,
+    "noRealRecordBodiesVendored": true
+  },
+  "futureRequirements": [
+    "explicit human-led rights and attribution review for intended publication",
+    "verify exact approved canonical Git commit and source digest",
+    "preserve original/comment/date/id semantics",
+    "separate public source references from external media preservation",
+    "no public publication until independent gate and deployment review"
+  ]
+}
