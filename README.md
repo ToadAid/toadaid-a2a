@@ -98,3 +98,13 @@ The [rights review intake](docs/agent-web/p0-web-03b1-lore-rights-review.md) rec
 - Offline classifier: `python3 -m agent_web.lore_rights_review --packet PRIVATE_PACKET --inventory PRIVATE_INVENTORY`.
 
 **ALL PUBLICATION FLAGS ALWAYS FALSE.** This cut does not export original Tobyworld text/media or create public agent endpoints, rights approval, protocol conformance or production deployments. Real rights remain **UNKNOWN** pending independent review; official A2A TCK remains UNRUN.
+
+## P0-WEB-03B2A — independent human rights-review handoff (NO APPROVAL)
+
+The [human-review handoff contract](docs/agent-web/p0-web-03b2a-human-review-handoff.md) binds a B1 rights-intake request to an offline docket with separate reviewer identity, independence, rights-chain, attribution, privacy, conflicts, objections and withdrawal evidence *references*. The checker refuses changed packet/source digests, unknown approval states, incomplete evidence and unresolved objections.
+
+- [Local, untrusted handoff schema](contracts/agent-web/lore-human-review-handoff.v0.schema.json)
+- [Fictional HOLD example (intentionally incomplete)](contracts/agent-web/examples/synthetic-human-review-handoff.v0.json)
+- Offline CLI: `python3 -m agent_web.lore_human_handoff --packet PRIVATE_PACKET --inventory PRIVATE_INVENTORY --docket PRIVATE_DOCKET`.
+
+**NEVER A RIGHTS GRANT.** Even structurally complete claims cannot establish human identity, prove lawful reuse, approve lore export, or deploy a service. P0-WEB-03B2's *real* independent human decision remains pending outside this repo; official A2A TCK remains UNRUN.
