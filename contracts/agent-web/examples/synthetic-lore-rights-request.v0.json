@@ -1,0 +1,34 @@
+{
+  "kind": "toadaid-lore-rights-review-request",
+  "schemaVersion": "0.1.0",
+  "source": {
+    "repository": "ToadAid/toadaid.github.io",
+    "path": "lore/data.json",
+    "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "sourceGitBlobSha1": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "sourceDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "recordCount": 1
+  },
+  "request": {
+    "operation": "evaluate_metadata",
+    "audience": "public-agent-native-web",
+    "recordIds": [
+      "EXAMPLE_TEST_RECORD"
+    ],
+    "fields": [
+      "id",
+      "date",
+      "title"
+    ],
+    "purpose": "SYNTHETIC_ONLY - show a rights request held pending proof"
+  },
+  "reviewEvidence": {
+    "rightsStatus": "unknown",
+    "permissionEvidenceId": null,
+    "attributionReviewId": null,
+    "privacyReviewId": null,
+    "withdrawalPlanId": null,
+    "humanReviewerAttestationId": null,
+    "mediaReviewId": null
+  }
+}
