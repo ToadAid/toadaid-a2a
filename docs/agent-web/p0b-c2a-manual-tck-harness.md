@@ -26,7 +26,7 @@ The future manual run chooses **JSON-RPC** and **MUST** tests: `uv run --no-sync
 File: [manual-a2a-tck-qualification.yml](../../.github/workflows/manual-a2a-tck-qualification.yml).
 
 The workflow:
-1. Is **manual-only**, restricted by its job condition to `main` plus a deliberate exact acknowledgement `RUN_PINNED_TCK_LOCAL_ONLY`; it must not run on PR, push, or schedule.
+1. Is **manual-only** and starts with a fail-closed, visible **first-step Director gate** checking both `main` and the exact acknowledgement `RUN_PINNED_TCK_LOCAL_ONLY`. A mismatched branch or approval exits nonzero **before checkout or third-party work**; it must not run on PR, push, or schedule.
 2. Uses a short-lived GitHub-hosted `ubuntu-latest` runner, read-only repository token, disabled persistent checkout credentials, pinned setup/checkout/artifact actions and a pinned `uv` tool.
 3. Clones the **public, pinned** upstream TCK at a fixed commit, checks the tree and the runner/lock/project Git object identities, then runs `uv sync --locked --no-dev`. This step downloads and executes **third-party dependencies** in the isolated runner; it is **not** permission to install them on Dell, TNG, or any production box.
 4. Starts only the existing synthetic A2A probe bound to `127.0.0.1` with a temporary mode-0700 private journal directory. No public Agent Card, tunnel, external endpoint, Agent0, MCP, wallet, Portal registration, or protected host state is touched.
@@ -53,3 +53,13 @@ After merging and verifying post-merge CI, a Director may explicitly authorize r
 **STOP:** if any upstream source identity differs, dependencies cannot be installed reproducibly, host scope changes, data leaks into artifacts, or the harness attempts public exposure.
 
 **ONE CUT · ONE PROOF · ONE DIRECTOR RULING.**
+
+## P0B-C2B gate diagnostics — first launch refused (2026-10-30)
+
+The first Director launch, GitHub Actions run [#41118047825](https://github.com/ToadAid/toadaid-a2a/actions/runs/41118047825), targeted approved main `62f5dd79770fb97bf13fd7fe01f96c698e69563a`. GitHub reported the job **SKIPPED** before running any steps. The prior job-level expression was `github.ref == 'refs/heads/main' && inputs.director_gate == 'RUN_PINNED_TCK_LOCAL_ONLY'`. The branch was verified correct; the submitted input is not exposed through the available GitHub run metadata, so **the specific mismatch was not proven**. No TCK test, dependency installation, or compatibility artifact was produced.
+
+**Remediation:** move the exact branch and Director acknowledgement checks into the *first executable shell step*, before checkout and any dependency installation. Inputs are passed through the environment, not evaluated as Bash source. A denied launch now reports a visible, generic GitHub error **without revealing the supplied input**. An approved launch proceeds to the same source-pinned, loopback-only TCK sequence. If the gate is denied, the evidence-artifact step is skipped; if the gate is approved and TCK later fails, the workflow still uploads raw failure reports.
+
+This repair does **not** execute the official TCK and does not prove compatibility or authorize deployment. Normal PR CI tests the gate logic with synthetic environment values and the existing foundation suite; it never runs the TCK.
+
+**Operator checkpoint:** after this patch merges with post-merge CI green, select **main** and input exactly `RUN_PINNED_TCK_LOCAL_ONLY` in a **new manual Actions dispatch**. Do not rerun the prior skipped job or guess at the underlying cause. If the next run fails, inspect the first failing step and its sanitized error before any further attempt. No blind retries, no additional authority.

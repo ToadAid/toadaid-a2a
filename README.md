@@ -73,3 +73,9 @@ The [P0B-C2A readiness contract](docs/agent-web/p0b-c2a-manual-tck-harness.md) p
 - [Already-frozen upstream TCK pin](contracts/agent-web/a2a-tck-pin-20261030.json).
 
 **OFFICIAL TCK NOT RUN.** No full A2A certification, external SDK proof, production endpoint or deployment authority is asserted by this cut.
+
+## P0B-C2B — explicit manual TCK gate diagnostics (no TCK execution)
+
+The [P0B-C2A runbook](docs/agent-web/p0b-c2a-manual-tck-harness.md#p0b-c2b-gate-diagnostics--first-launch-refused-2026-10-30) records the first manual run as **SKIPPED** (no TCK tests executed). The manual workflow now verifies branch and exact Director approval as the first executable step, reporting a clear refusal instead of silently skipping the job. Negative tests exercise accepted and denied gate values. GitHub PR and push CI still do **not** dispatch the official TCK.
+
+**Official TCK NOT RUN.** Next manual dispatch requires a separate Director action after merge qualification; no production or agent-facing endpoints are affected.

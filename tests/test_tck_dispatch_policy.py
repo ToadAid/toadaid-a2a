@@ -20,9 +20,59 @@ class ManualTckGateTests(unittest.TestCase):
         self.assertIn("\non:\n  workflow_dispatch:", self.yaml)
         for forbidden in ("\n  push:", "\n  pull_request:", "\n  schedule:", "workflow_run:"):
             self.assertNotIn(forbidden, self.yaml)
-        self.assertIn("github.ref == 'refs/heads/main'", self.yaml)
-        self.assertIn("inputs.director_gate == 'RUN_PINNED_TCK_LOCAL_ONLY'", self.yaml)
+        self.assertIn("test \"$GITHUB_REF\" != 'refs/heads/main'", self.yaml)
+        self.assertIn('DIRECTOR_GATE: ${{ inputs.director_gate }}', self.yaml)
+        self.assertIn('test "${DIRECTOR_GATE-}" != \'RUN_PINNED_TCK_LOCAL_ONLY\'', self.yaml)
         self.assertIn("permissions:\n  contents: read", self.yaml)
+
+    def _gate_shell(self):
+        """Extract only the pre-checkout gate step, not the TCK workflow."""
+        begin = "      - name: Validate Director authorization before all other work\n"
+        end = "      - name: Checkout protected main without persisted credentials"
+        block = self.yaml.split(begin, 1)[1].split(end, 1)[0]
+        self.assertIn("        run: |", block)
+        return "\n".join(line.removeprefix("          ") for line in
+                         block.split("        run: |\n", 1)[1].splitlines()) + "\n"
+
+    def _run_gate(self, approval, ref):
+        import os
+        import subprocess
+        env = dict(os.environ)
+        env["DIRECTOR_GATE"] = approval
+        env["GITHUB_REF"] = ref
+        return subprocess.run(["bash", "-c", self._gate_shell()], env=env,
+                              text=True, capture_output=True, timeout=3)
+
+    def test_gate_checked_before_checkout(self):
+        gate = self.yaml.index("Validate Director authorization before all other work")
+        checkout = self.yaml.index("Checkout protected main without persisted credentials")
+        upstream = self.yaml.index("Fetch and independently verify immutable upstream TCK")
+        self.assertLess(gate, checkout)
+        self.assertLess(checkout, upstream)
+        self.assertNotIn("    if: ${{ github.ref ==", self.yaml)
+        self.assertIn("always() && steps.director-gate.outcome == 'success'", self.yaml)
+
+    def test_correct_authorization_allows_only_preflight(self):
+        run = self._run_gate("RUN_PINNED_TCK_LOCAL_ONLY", "refs/heads/main")
+        self.assertEqual(run.returncode, 0, run.stderr + run.stdout)
+        self.assertIn("validated on main", run.stdout)
+
+    def test_wrong_authorizations_fail_visibly(self):
+        for approval in ("", "RUN_PINNED_TCK_LOCAL_ONLY ",
+                         "RUN_PINNED_TCK_LOCAL_ONLy",
+                         "RUN_PINNED_TCK_LOCAL_ONLY\n"):
+            with self.subTest(approval=repr(approval)):
+                run = self._run_gate(approval, "refs/heads/main")
+                self.assertNotEqual(run.returncode, 0)
+                self.assertIn("No TCK executed", run.stdout)
+                if approval:
+                    self.assertNotIn(approval, run.stdout)
+
+    def test_correct_authorization_on_wrong_ref_fails(self):
+        run = self._run_gate("RUN_PINNED_TCK_LOCAL_ONLY",
+                             "refs/heads/cut-unauthorized")
+        self.assertNotEqual(run.returncode, 0)
+        self.assertIn("Select protected main", run.stdout)
 
     def test_pinned_upstream_git_objects(self):
         for key in ("pinnedCommit", "gitTreeSha1", "runnerGitBlobSha1",
