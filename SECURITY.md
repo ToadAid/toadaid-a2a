@@ -7,10 +7,18 @@ with this cut, shipping together with CONTRIBUTING.md.
 
 ## Reporting a security concern
 
-**Do not open a public GitHub issue for security findings.** This repository is an
-architecture-first, local-only status ledger: nothing in it is deployed, executed as a
-service, or connected to real systems, so a public issue cannot be triaged as a real
-incident and may mislead readers into thinking a production boundary is exposed.
+**Do not open a public GitHub issue for security findings.** Stating the boundary
+accurately:
+
+- **No production A2A gateway, public endpoint, or hosted service is deployed.** This
+  repository is architecture-first; nothing connects to real systems in production.
+- **The repository is not inert.** It contains locally executed tools (CLI utilities,
+  offline classifiers) and explicitly started loopback `127.0.0.1` test fixtures.
+  Locally executed code like that can present genuine security findings — for example
+  a fail-closed seam that fails open, a fixture binding or accepting more than it
+  should, or a boundary documented weaker than implemented.
+- A public issue conflates a code-level finding with a production incident and cannot
+  be triaged as it deserves, so findings go through the private channel below.
 
 ## Designated channel: GitHub Private Vulnerability Reporting
 
@@ -36,9 +44,14 @@ designated security contact). Do not disclose findings publicly.
 
 ## Scope guidance
 
-- **Welcome:** findings about trust-boundary logic, fail-closed seams, refusal
-  semantics, contract/schema validation, admission or authority handling, and
-  documentation that understates a boundary.
-- **Not needed:** reports that assume this repository is a deployed service (it is
-  not), or that rest on synthetic fixtures being treated as real systems. Loopback
-  URLs and synthetic examples are intentionally fictional and labeled as such.
+- **Welcome:** findings about locally executed tools, loopback fixture behavior
+  (binding, scope, lifetime, input handling), trust-boundary logic, fail-closed seams,
+  refusal semantics, contract/schema validation, admission or authority handling, and
+  documentation that overstates or understates a boundary.
+- **No production exposure as claimed by this repository today:** no A2A gateway,
+  public endpoint, or hosted service is deployed, and no production system is affected.
+  A report describing a production-side exploit path against this repository does not
+  apply as stated — but locally executable findings remain fully in scope, as listed
+  above.
+- Synthetic example records and fixtures are intentionally fictional and labeled as
+  such; reports consisting solely of an example being fictional are unnecessary.

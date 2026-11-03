@@ -176,6 +176,12 @@ pins and a runtime runner-side clone. Apply `LICENSE` only after Director approv
    or `CONTRIBUTING.md`. Is the Director comfortable with that, or should a separate
    designated security-disclosure address be published (currently only GitHub private
    messaging to the repository owner is offered)?
+
+   *Historical premise — superseded (2026-11-03):* the channel referenced above is now
+   **GitHub Private Vulnerability Reporting, verified ENABLED on this repository**, as
+   documented by the live [`SECURITY.md`](../../SECURITY.md) policy — which is the
+   designated reporting channel and takes precedence over this historical wording.
+   Only the underlying question of whether to publish an email address remains open.
 3. **Future vendoring policy:** should future cuts be allowed to vendor Apache-2.0
    upstream material at all, or must they instead continue the current metadata-pin
    pattern with runtime-only upstream use (recommendation: continue pinning)?

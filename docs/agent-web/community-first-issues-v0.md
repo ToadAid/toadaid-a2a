@@ -6,8 +6,13 @@ Director review; nothing has been posted on GitHub, and creating the issues is a
 separate, Director-authorized step.
 
 Drafts are non-duplicative (README/acceptance-gates documentation, observatory test
-coverage, repository hygiene), small, and each was verified against the worktree at
-base `cc7eec4ee0f84f9d501fe0d891d2f8f8f363b9a9`. None touches authentication,
+coverage, repository hygiene), small, and each was first verified against the worktree
+at base `cc7eec4ee0f84f9d501fe0d891d2f8f8f363b9a9`. Each gap was **re-verified against
+`main` at `55d6ff966d2b3b146051f0880a6843a55ac2ea16` (2026-11-03, after the merged PR
+#15 admission-gate cut)**: all three remain actual, open gaps, and the counts/examples
+below already account for the admission cut (316-test baseline; five `__pycache__`
+directories; feed.py line references unchanged, as `observatory/`, `README.md` and the
+acceptance-gates ledger were not touched by PR #15). None touches authentication,
 credentials, wallets, trust-boundary enforcement logic, or production hosting.
 
 ---
@@ -18,12 +23,15 @@ credentials, wallets, trust-boundary enforcement logic, or production hosting.
 
 **Labels:** `documentation`, `good first issue`
 
-**Objective:** the newest cut (AO-P0A, commit `cc7eec4` "feat(a2a): AO-P0A agent
+**Objective:** the AO-P0A cut (commit `cc7eec4` "feat(a2a): AO-P0A agent
 observatory data foundation") is missing from both status ledgers that every other cut
 has: `README.md` has per-cut sections ending at P0-WEB-03B2A and says nothing about the
 observatory, and `docs/agent-web/acceptance-gates-v0.md` has no AO-P0A section. A
 reader cannot see from the project's own ledgers that the observatory exists, that it
-is a PRIVATE owner-dashboard foundation, or that nothing is deployed.
+is a PRIVATE owner-dashboard foundation, or that nothing is deployed. (Re-verified
+2026-11-03 on `main` at `55d6ff9`, which now also carries the merged PR #15 admission
+cut: the AO-P0A counts are still exactly 0 in both ledgers — PR #15 added no README or
+acceptance-gates section of its own.)
 
 **Relevant file paths:**
 
@@ -96,7 +104,10 @@ assert `PAGE_OFFSET_PAST_END`; call `synthetic_offline_authenticator({})` /
 - [ ] Each of the five refusal codes listed above is asserted in at least one test that triggers it deliberately.
 - [ ] Tests live in `tests/test_observatory_foundation.py`, use `unittest` and stdlib only, and follow existing naming/style.
 - [ ] No source file under `observatory/` is changed (tests only in this cut).
-- [ ] Full suite passes: `python3 -m unittest discover -s tests -v` (baseline is 236 tests; this adds at least 5).
+- [ ] Full suite passes: `python3 -m unittest discover -s tests -v` (on `main` at the
+      time of drafting, the baseline is **316** tests — including the 80 admission-gate
+      tests added by PR #15; this issue adds at least 5 more, on top of whatever the
+      baseline is at the time you work).
 
 **Local verification:**
 
@@ -122,13 +133,14 @@ authorization logic, `agent_web/`, `contracts/`, and `.github/`.
 
 **Objective:** `README.md` (five times) and `CONTRIBUTING.md` tell contributors to run
 `python3 -m unittest discover -s tests -v`. Running that command on a clean checkout
-creates `__pycache__/` directories under `agent_web/`, `observatory/`, `tests/` and
-`tools/`, and — because the repository has **no `.gitignore`** — `git status --porcelain`
-immediately shows four untracked paths that have nothing to do with anyone's change.
+creates `__pycache__/` directories under `agent_web/`, `observatory/`, `tools/`,
+`tests/` **and `admission/`** (the fifth was added by the merged PR #15 admission
+cut) — and, because the repository has **no `.gitignore`**, `git status --porcelain`
+immediately shows five untracked paths that have nothing to do with anyone's change.
 New contributors will either commit those directories or think their checkout is
-broken. Verified on the base commit: a test run does create exactly
-`agent_web/__pycache__/`, `observatory/__pycache__/`, `tests/__pycache__/`,
-`tools/__pycache__/` as untracked.
+broken. Verified on `main` at `55d6ff966d2b3b146051f0880a6843a55ac2ea16` (2026-11-03):
+a test run creates exactly `agent_web/__pycache__/`, `admission/__pycache__/`,
+`observatory/__pycache__/`, `tests/__pycache__/`, `tools/__pycache__/` as untracked.
 
 **Relevant file paths:**
 
@@ -157,7 +169,7 @@ hide real changes on a future cut.
 git clone https://github.com/ToadAid/toadaid-a2a.git
 cd toadaid-a2a
 python3 -m unittest discover -s tests -v        # leaves untracked __pycache__ dirs before fix
-git status --porcelain                          # shows 4 paths before fix
+git status --porcelain                          # shows 5 paths before fix
 git ls-files | xargs wc -l >/dev/null || true   # tracked inventory unchanged
 git diff --check                                # clean
 ```

@@ -41,10 +41,11 @@ install, no pip):
 python3 -m unittest discover -s tests -v
 ```
 
-That's the whole toolchain. Any Python 3 works: the suite is standard-library-only,
-CI runs the same command on GitHub's `ubuntu-latest` runner without a version pin, and
-the cut was locally verified on Python 3.12. There is intentionally no `requirements.txt`
-and nothing to install.
+That's the whole toolchain. The suite is standard-library-only; CI runs the same command
+on GitHub's `ubuntu-latest` runner **without an interpreter pin**, and it was verified
+locally on **Python 3.12**. No other interpreter version has been independently tested,
+so no broader compatibility claim — and no minimum version — is stated here. There is
+intentionally no `requirements.txt` and nothing to install.
 
 ## Proposing improvements
 
@@ -93,17 +94,32 @@ and nothing to install.
 The following are settled decisions, not open invitations:
 
 - **No production deployment** and no real authentication — do not wire one in.
-- **No agent admission**, no agent registration, no public `Agent Card`.
+- **No live agent admission or registration**, and no public `Agent Card` — nothing
+  here registers or admits agents on any live surface. (PR #15 added an **offline,
+  synthetic-only** admission-rule engine run fully in-process; it is not a live
+  registration service and provides no production authentication.)
 - **No wallets, payments, or MCP tool-authority surfaces.**
-- **No network calls in tests** — everything runs offline against localhost fixtures.
+- **No external network calls in tests** — the suite never contacts the internet;
+  tests exercise explicit, hand-started `127.0.0.1` loopback socket/HTTP fixtures
+  instead. Loopback sockets are still real local network calls, which is why the
+  next section asks for private disclosure.
 - Do not reuse loopback fixture URLs or synthetic examples as if they were real.
 
 ## Reporting security concerns privately
 
 Do **not** open a public GitHub issue for security findings: this repository documents
 trust boundaries before it deploys any, so a public issue about a boundary could cause
-confusion about whether real systems are affected. Also note plainly: **nothing in this
-repository is deployed**, so a reported "vulnerability" cannot affect real systems.
+confusion about whether real systems are affected — and a real finding buried in a
+public thread cannot be triaged as it deserves.
+
+Stating the boundary accurately:
+
+- **No production A2A gateway, public endpoint, or hosted service is deployed.**
+- This repository is **not inert**, though: it contains locally executed tools and
+  explicitly started loopback `127.0.0.1` fixtures. Locally executed code like that
+  can present genuine security findings — for example a fail-closed seam that fails
+  open, or a fixture accepting inputs it should refuse. Those findings are real
+  security findings, welcome through the private channel below.
 
 The designated disclosure channel is **[GitHub Private Vulnerability
 Reporting (SECURITY.md)](SECURITY.md)**: the repository's Security tab →
