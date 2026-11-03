@@ -1,9 +1,12 @@
-"""CUT-A2A-P0D-A1-20261103 (R1) — offline adversarial qualification of the
-registration-aware A2A participation gate.
+"""CUT-A2A-P0D-A1-20261103 (R1) with CUT-A2A-P0D-A2-20261103 extension —
+offline adversarial qualification of the registration-aware A2A
+participation gate.
 
 Synthetic, stdlib-only, no network, no sockets, no live agents: bounded
-model, fail-closed adapter AND caller-identity seams (registration is NOT
-authentication), claim forgery refusals, sender SEND enforcement,
+model, fail-closed adapter, caller-identity (registration is NOT
+authentication), credential-LIFECYCLE state (P0D-A2: REVOCATION_OVERRIDES_
+PRIOR_APPROVAL — no agent claim proves its own currency), and clock
+seams; claim forgery refusals, sender SEND enforcement,
 status/evidence freshness enforcement with correct UTC conversion,
 participation scoping on both delivery sides, recipient-bound replay
 identity, export/restore behavior, tenant isolation, and the two-agent
@@ -11,6 +14,8 @@ synthetic rehearsal (Registered Agent A -> gate -> Registered Agent B).
 Two-framework fixtures use descriptive framework labels only — NO actual
 OpenClaw/Hermes integration is claimed, wired, or tested. Boundary under
 test: local synthetic engine, NOT DEPLOYED, zero execution authority.
+P0D-A2 adversarial lifecycle controls live in
+tests/test_a2a_p0d_credential_lifecycle.py.
 """
 
 import copy
@@ -32,6 +37,11 @@ from admission.gate import (
     synthetic_caller_credential,
     synthetic_caller_verifier,
     synthetic_registration_adapter,
+)
+from admission.lifecycle import (
+    LIFECYCLE_STATUSES,
+    build_lifecycle_state,
+    synthetic_lifecycle_source,
 )
 from admission.model import (
     FRAMEWORK_KINDS,
@@ -104,6 +114,44 @@ def recipient(agent_ref="agent-beta-one", tenant_ref="tenant-alpha",
     return {"agentRef": agent_ref, "tenantRef": tenant_ref, "ownerRef": owner_ref}
 
 
+def lifecycle(agent_ref="agent-alpha-one", tenant_ref="tenant-alpha",
+              owner_ref="owner-alpha", status="registered",
+              generation=2, epoch=1, observed=_OBSERVED):
+    """Trusted (source-issued) lifecycle state — the CURRENT truth."""
+    return build_lifecycle_state(
+        agent_ref=agent_ref,
+        owner_ref=owner_ref,
+        tenant_ref=tenant_ref,
+        lifecycle_status=status,
+        current_credential_generation=generation,
+        current_revocation_epoch=epoch,
+        observed_at_utc=observed,
+    )
+
+
+def matching_lifecycle_source(decisions, **overrides):
+    """Source mirroring adapter decisions as CURRENT registered state.
+
+    The P0D-A1 fixtures in this file keep the lifecycle source aligned
+    with each agent's decision (always status "registered", so the
+    decision-path refusal codes keep dominating). The dedicated
+    lifecycle adversarial suite mutates or replaces the source directly.
+    """
+    states = {}
+    for ref, record in decisions.items():
+        kwargs = {
+            "agent_ref": record["agentRef"],
+            "tenant_ref": record["tenantRef"],
+            "owner_ref": record["ownerRef"],
+            "status": "registered",
+            "generation": record["credentialGeneration"],
+            "epoch": record["revocationEpoch"],
+        }
+        kwargs.update(overrides)
+        states[ref] = lifecycle(**kwargs)
+    return synthetic_lifecycle_source(states)
+
+
 def rehearsal_decisions():
     return {
         "agent-openclaw-like": decision(
@@ -135,10 +183,11 @@ def rehearsal_gate(decisions=None, now=_NOW):
     wired. The two agents hold different owners inside one tenant; the
     caller verifier binds an opaque credential to each (R1-4 fixture).
     """
+    d = rehearsal_decisions() if decisions is None else decisions
     return RegisteredAgentGate(
-        trusted_registration_adapter=synthetic_registration_adapter(
-            rehearsal_decisions() if decisions is None else decisions),
+        trusted_registration_adapter=synthetic_registration_adapter(d),
         trusted_caller_verifier=synthetic_caller_verifier(rehearsal_bindings()),
+        trusted_lifecycle_source=matching_lifecycle_source(d),
         now=lambda: now,
     )
 
@@ -150,15 +199,15 @@ def single_gate(agent_ref="agent-alpha-one", tenant_ref="tenant-alpha",
     Returns (gate, credential).
     """
     cred = synthetic_caller_credential("fixture-" + agent_ref)
+    d = {agent_ref: decision(agent_ref=agent_ref, tenant_ref=tenant_ref,
+                             owner_ref=owner_ref, **decision_kwargs)}
     gate = RegisteredAgentGate(
-        trusted_registration_adapter=synthetic_registration_adapter({
-            agent_ref: decision(agent_ref=agent_ref, tenant_ref=tenant_ref,
-                                owner_ref=owner_ref, **decision_kwargs),
-        }),
+        trusted_registration_adapter=synthetic_registration_adapter(d),
         trusted_caller_verifier=synthetic_caller_verifier({
             cred: {"agentRef": agent_ref, "tenantRef": tenant_ref,
                    "ownerRef": owner_ref},
         }),
+        trusted_lifecycle_source=matching_lifecycle_source(d),
         now=lambda: _NOW,
     )
     return gate, cred
@@ -419,15 +468,15 @@ class UtcEvidenceTests(unittest.TestCase):
 
     def test_nonzero_offset_refuses_exactly_expired_evidence(self):
         # 14:00+02:00 == 12:00Z -> evidence expiring 12:00:00Z is exhausted.
-        adapter = synthetic_registration_adapter(
-            {"agent-alpha-one": decision(expires="2026-11-03T12:00:00Z")})
+        d = {"agent-alpha-one": decision(expires="2026-11-03T12:00:00Z")}
         gate = RegisteredAgentGate(
-            trusted_registration_adapter=adapter,
+            trusted_registration_adapter=synthetic_registration_adapter(d),
             trusted_caller_verifier=synthetic_caller_verifier({
                 _CRED_ALPHA: {"agentRef": "agent-alpha-one",
                               "tenantRef": "tenant-alpha",
                               "ownerRef": "owner-alpha"},
             }),
+            trusted_lifecycle_source=matching_lifecycle_source(d),
             now=lambda: datetime.datetime(
                 2026, 11, 3, 14, 0, 0,
                 tzinfo=datetime.timezone(datetime.timedelta(hours=2))))
@@ -437,15 +486,15 @@ class UtcEvidenceTests(unittest.TestCase):
 
     def test_nonzero_offset_admits_one_second_of_headroom(self):
         # 13:59:59+02:00 == 11:59:59Z -> evidence expiring 12:00:00Z is live.
-        adapter = synthetic_registration_adapter(
-            {"agent-alpha-one": decision(expires="2026-11-03T12:00:00Z")})
+        d = {"agent-alpha-one": decision(expires="2026-11-03T12:00:00Z")}
         gate = RegisteredAgentGate(
-            trusted_registration_adapter=adapter,
+            trusted_registration_adapter=synthetic_registration_adapter(d),
             trusted_caller_verifier=synthetic_caller_verifier({
                 _CRED_ALPHA: {"agentRef": "agent-alpha-one",
                               "tenantRef": "tenant-alpha",
                               "ownerRef": "owner-alpha"},
             }),
+            trusted_lifecycle_source=matching_lifecycle_source(d),
             now=lambda: datetime.datetime(
                 2026, 11, 3, 13, 59, 59,
                 tzinfo=datetime.timezone(datetime.timedelta(hours=2))))
@@ -455,15 +504,15 @@ class UtcEvidenceTests(unittest.TestCase):
     def test_correct_utc_conversion_admits_not_yet_expired(self):
         # 16:00+05:45 == 10:15Z -> evidence expiring 11:00Z is still live
         # (a naive-strip bug would read 16:00 and refuse).
-        adapter = synthetic_registration_adapter(
-            {"agent-alpha-one": decision(expires="2026-11-03T11:00:00Z")})
+        d = {"agent-alpha-one": decision(expires="2026-11-03T11:00:00Z")}
         gate = RegisteredAgentGate(
-            trusted_registration_adapter=adapter,
+            trusted_registration_adapter=synthetic_registration_adapter(d),
             trusted_caller_verifier=synthetic_caller_verifier({
                 _CRED_ALPHA: {"agentRef": "agent-alpha-one",
                               "tenantRef": "tenant-alpha",
                               "ownerRef": "owner-alpha"},
             }),
+            trusted_lifecycle_source=matching_lifecycle_source(d),
             now=lambda: datetime.datetime(
                 2026, 11, 3, 16, 0, 0,
                 tzinfo=datetime.timezone(datetime.timedelta(hours=5, minutes=45))))
@@ -472,15 +521,15 @@ class UtcEvidenceTests(unittest.TestCase):
 
     def test_correct_utc_conversion_refuses_across_long_offset(self):
         # 07:00-06:00 == 13:00Z -> evidence expiring 11:00Z is dead.
-        adapter = synthetic_registration_adapter(
-            {"agent-alpha-one": decision(expires="2026-11-03T11:00:00Z")})
+        d = {"agent-alpha-one": decision(expires="2026-11-03T11:00:00Z")}
         gate = RegisteredAgentGate(
-            trusted_registration_adapter=adapter,
+            trusted_registration_adapter=synthetic_registration_adapter(d),
             trusted_caller_verifier=synthetic_caller_verifier({
                 _CRED_ALPHA: {"agentRef": "agent-alpha-one",
                               "tenantRef": "tenant-alpha",
                               "ownerRef": "owner-alpha"},
             }),
+            trusted_lifecycle_source=matching_lifecycle_source(d),
             now=lambda: datetime.datetime(
                 2026, 11, 3, 7, 0, 0,
                 tzinfo=datetime.timezone(datetime.timedelta(hours=-6))))
@@ -928,6 +977,7 @@ class ReplayAndRestartTests(unittest.TestCase):
         gate = RegisteredAgentGate(
             trusted_registration_adapter=synthetic_registration_adapter(decisions),
             trusted_caller_verifier=synthetic_caller_verifier(bindings),
+            trusted_lifecycle_source=matching_lifecycle_source(decisions),
             now=lambda: _NOW,
             journal=AdmissionJournal(capacity=1))
         gate.route(request(message_id="msg-alpha-001"), recipient(), _CRED_ALPHA)
@@ -1058,6 +1108,7 @@ class TenantIsolationTests(unittest.TestCase):
                               "tenantRef": "tenant-alpha",
                               "ownerRef": "owner-alpha"},
             }),
+            trusted_lifecycle_source=matching_lifecycle_source(decisions),
             now=lambda: _NOW)
 
     def test_cross_tenant_delivery_refused(self):

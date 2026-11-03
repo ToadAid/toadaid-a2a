@@ -126,14 +126,14 @@ supplied history.
 
 ## Verification (local, offline)
 
-`python3 -m unittest discover -s tests -v` — 316 tests OK
-(236 baseline + 80 in
+`python3 -m unittest discover -s tests -v` — 316 tests at this cut's
+baseline (236 baseline + 80 in
 `tests/test_a2a_p0d_admission_gate.py`), covering: model binding and
 kwarg smuggling, calendar-real timestamps, the full construction-refusal
 matrix plus malformed-collection enums, fail-closed default gate, all
-three trust seams (caller verifier / registration adapter / clock) each
-refusing independently when missing, caller-identity enforcement
-(R1-4), sender send enforcement (R1-1), recipient-bound replay across
+three trust seams at this cut's baseline (caller verifier / registration
+adapter / clock) each refusing independently when missing, caller-identity
+enforcement (R1-4), sender send enforcement (R1-1), recipient-bound replay across
 recipients and export/restore (R1-2), aware-clock UTC conversion
 boundary pairs with nonzero offsets (R1-3), adapter tamper and malformed
 records, every registration status, evidence expiry including the
@@ -149,6 +149,14 @@ writes no journal entry), receipt binding of both agents, the full
 two-agent rehearsal A→B and B→A with descriptive framework labels,
 revocation mid-conversation, the preserved invariant verbatim, and
 constants.
+
+NOTA (P0D-A2): the gate now carries a fourth fail-closed seam — the
+trusted credential-lifecycle state source enforcing
+REVOCATION_OVERRIDES_PRIOR_APPROVAL on every admission. The fixture
+gates in the P0D-A1 test file inject it alongside the original three
+seams; the dedicated lifecycle adversarial suite and its refusal codes
+are documented in
+[a2a-p0d-a2-credential-lifecycle-enforcement.md](a2a-p0d-a2-credential-lifecycle-enforcement.md).
 
 ## Director decisions still open (NOT assumed)
 

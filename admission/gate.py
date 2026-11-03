@@ -21,6 +21,24 @@ refuses everything. No production authentication, Portal login, or live
 agent connection exists in this cut; the synthetic caller verifier and
 CallerCredential fixture are explicitly SYNTHETIC OFFLINE ONLY.
 
+Credential lifecycle (P0D-A2, REVOCATION_OVERRIDES_PRIOR_APPROVAL): a
+registration decision carrying credentialGeneration/revocationEpoch does
+NOT prove those values are current. EVERY authorize()/route() call also
+fetches CURRENT lifecycle state for each participating agent from a third
+independently verified seam (trusted_lifecycle_source), under the same
+exact three-field identity context. A decision must carry the CURRENT
+generation and CURRENT revocation epoch (older = stale, higher = a
+future claim); any lifecycle status other than "registered" — including
+suspension, revocation, and EMERGENCY DISABLEMENT — refuses, and an
+identical replay never bypasses a revocation that occurred after its
+original admission (lifecycle is enforced before the journal check, so a
+revoked agent's replay refuses and appends NO journal entry). The gate
+also keeps a per-agent monotonic high-watermark over source-reported
+generations and epochs to detect state ROLLBACK; like the journal this
+watermark is IN-MEMORY ONLY — it provides no durable rollback protection
+after process restart, and no cryptographic provenance is invented.
+No agent-supplied claim can establish its own current credential state.
+
 Preserved invariant: A2A_CHAT_HAS_ZERO_EXECUTION_AUTHORITY — an admitted
 message authorizes no tool, payment, wallet, deployment, protected-host
 mutation, or registration change. Authority flags are all false by
@@ -59,6 +77,10 @@ from .model import (
     build_registration_decision,
     canonical_json,
     parse_iso_utc,
+)
+from .lifecycle import (
+    LIFECYCLE_STATE_KEYS,
+    build_lifecycle_state,
 )
 from observatory.model import (
     IDENTIFIER_RE,
@@ -323,20 +345,29 @@ def synthetic_registration_adapter(decisions,
 class RegisteredAgentGate:
     """Executable, transport-independent registered-agent gate.
 
-    Fails closed unless THREE trust seams are injected: a trusted caller
+    Fails closed unless FOUR trust seams are injected: a trusted caller
     verifier (WHO is asking — R1-4), a trusted registration adapter
-    (WHAT the registered agent may do), and a clock source (WHEN the
-    evidence is still fresh). Every caller credential is bound to an
-    independently verified principal; every returned decision is
-    re-validated and re-bound to the request context before use.
+    (WHAT the registered agent may do), a trusted credential-lifecycle
+    source (WHICH generation and revocation epoch are CURRENT — P0D-A2),
+    and a clock source (WHEN the evidence is still fresh). Every caller
+    credential is bound to an independently verified principal; every
+    returned decision is re-validated and re-bound to the request
+    context before use; every decision's generation and epoch are
+    checked against independently verified CURRENT lifecycle state.
     """
 
     def __init__(self, trusted_registration_adapter=None,
-                 trusted_caller_verifier=None, now=None, journal=None):
+                 trusted_caller_verifier=None, trusted_lifecycle_source=None,
+                 now=None, journal=None):
         self.trusted_registration_adapter = trusted_registration_adapter
         self.trusted_caller_verifier = trusted_caller_verifier
+        self.trusted_lifecycle_source = trusted_lifecycle_source
         self.now = now
         self.journal = journal if journal is not None else AdmissionJournal()
+        # P0D-A2: per-agent monotonic high-watermark over SOURCE-reported
+        # lifecycle counters, detecting state rollback. IN-MEMORY ONLY —
+        # no durable rollback protection survives process restart.
+        self._lifecycle_high_water = {}
 
     # -- caller identity -------------------------------------------------
 
@@ -366,6 +397,95 @@ class RegisteredAgentGate:
             if principal[field] != scope[field]:
                 raise ParticipationRefused("CALLER_IDENTITY_MISMATCH")
 
+    # -- credential lifecycle (P0D-A2) ----------------------------------------
+
+    def _enforce_lifecycle(self, identity_query, decision):
+        """Compare a verified decision against CURRENT lifecycle state.
+
+        Fails closed: no source -> refusal; source unavailable -> refusal;
+        malformed / tampered / identity-mismatched state -> refusal; any
+        status but "registered" -> refusal; a decision whose generation
+        or revocation epoch is not the CURRENT value -> refusal; and a
+        source reporting a counter BELOW this gate's per-agent
+        high-watermark (state rollback) -> refusal. The watermark is
+        IN-MEMORY only and provides no durable protection across a
+        process restart.
+        """
+        source = self.trusted_lifecycle_source
+        if source is None or not callable(source):
+            raise ParticipationRefused("LIFECYCLE_SOURCE_NOT_TRUSTED")
+        if set(identity_query) != {"agentRef", "tenantRef", "ownerRef"}:
+            raise AdmissionRefused("LIFECYCLE_QUERY_NOT_ADMITTED")
+        raw = source(identity_query)
+        if raw is None:
+            raise ParticipationRefused("LIFECYCLE_STATE_UNAVAILABLE")
+        if not isinstance(raw, dict) or set(raw) != LIFECYCLE_STATE_KEYS:
+            raise ParticipationRefused("LIFECYCLE_STATE_SHAPE_INVALID")
+        state = build_lifecycle_state(
+            agent_ref=raw["agentRef"],
+            owner_ref=raw["ownerRef"],
+            tenant_ref=raw["tenantRef"],
+            lifecycle_status=raw["lifecycleStatus"],
+            current_credential_generation=raw["currentCredentialGeneration"],
+            current_revocation_epoch=raw["currentRevocationEpoch"],
+            observed_at_utc=raw["observedAtUtc"],
+        )
+        if state["kind"] != "toadaid-a2a-credential-lifecycle-state":
+            raise ParticipationRefused("LIFECYCLE_STATE_KIND_INVALID")
+        if canonical_json(state) != canonical_json(raw):
+            raise ParticipationRefused("LIFECYCLE_STATE_TAMPERED")
+        for field in ("agentRef", "tenantRef", "ownerRef"):
+            if state[field] != identity_query[field]:
+                raise ParticipationRefused("LIFECYCLE_STATE_IDENTITY_MISMATCH")
+
+        watermark = self._lifecycle_high_water.get(identity_query["agentRef"])
+        if watermark is None:
+            watermark = {"generation": state["currentCredentialGeneration"],
+                         "epoch": state["currentRevocationEpoch"]}
+        else:
+            # Rollback detection: only a source reporting a lower counter
+            # than ever seen before trips this. Equal-or-higher refreshes
+            # the watermark.
+            if state["currentCredentialGeneration"] < watermark["generation"] \
+                    or state["currentRevocationEpoch"] < watermark["epoch"]:
+                raise ParticipationRefused("CREDENTIAL_STATE_ROLLBACK")
+            watermark = {
+                "generation": max(watermark["generation"],
+                                  state["currentCredentialGeneration"]),
+                "epoch": max(watermark["epoch"],
+                             state["currentRevocationEpoch"]),
+            }
+        self._lifecycle_high_water[identity_query["agentRef"]] = watermark
+
+        status = state["lifecycleStatus"]
+        if status == "registered":
+            pass
+        elif status == "revoked":
+            raise ParticipationRefused("LIFECYCLE_STATUS_REVOKED")
+        elif status == "suspended":
+            raise ParticipationRefused("LIFECYCLE_STATUS_SUSPENDED")
+        elif status == "disabled":
+            # Emergency disablement — no silent path back to admission.
+            raise ParticipationRefused("LIFECYCLE_STATUS_DISABLED")
+        else:
+            raise ParticipationRefused("LIFECYCLE_STATUS_UNKNOWN")
+
+        if decision["credentialGeneration"] \
+                < state["currentCredentialGeneration"]:
+            raise ParticipationRefused("CREDENTIAL_GENERATION_STALE")
+        if decision["credentialGeneration"] \
+                > state["currentCredentialGeneration"]:
+            # A higher generation proves nothing: newly rotated
+            # credentials are not automatically trusted merely because
+            # their generation is higher.
+            raise ParticipationRefused("CREDENTIAL_GENERATION_NOT_CURRENT")
+        if decision["revocationEpoch"] < state["currentRevocationEpoch"]:
+            # REVOCATION_OVERRIDES_PRIOR_APPROVAL: a decision from before
+            # the current epoch never survives a later revocation.
+            raise ParticipationRefused("REVOCATION_EPOCH_STALE")
+        if decision["revocationEpoch"] > state["currentRevocationEpoch"]:
+            raise ParticipationRefused("REVOCATION_EPOCH_NOT_CURRENT")
+
     # -- sender authorization ------------------------------------------------
 
     def authorize(self, request, caller_credential=None):
@@ -380,6 +500,9 @@ class RegisteredAgentGate:
         self._caller_matches(principal, scope)
         query = {field: scope[field] for field in ("agentRef", "tenantRef", "ownerRef")}
         decision = self._verified_decision(query, require_scope=scope["participationScope"])
+        # P0D-A2 — current credential-lifecycle state is mandatory even
+        # for a verified, non-expired, correctly-scoped decision.
+        self._enforce_lifecycle(query, decision)
         return self._admission_receipt(scope, decision)
 
     # -- two-agent routing ---------------------------------------------------
@@ -421,9 +544,15 @@ class RegisteredAgentGate:
                         for field in ("agentRef", "tenantRef", "ownerRef")}
         sender_decision = self._verified_decision(
             sender_query, require_scope="a2a-message-send")
+        # P0D-A2 — BOTH sides of a delivery pass the CURRENT lifecycle
+        # check before any journal write, so an identical replay cannot
+        # bypass a revocation that occurred since its original admission,
+        # and lifecycle refusals append NO journal entry.
+        self._enforce_lifecycle(sender_query, sender_decision)
 
         recipient_decision = self._verified_decision(
             dict(recipient_context), require_scope="a2a-message-receive")
+        self._enforce_lifecycle(dict(recipient_context), recipient_decision)
         if recipient_decision["tenantRef"] != sender_decision["tenantRef"]:
             raise ParticipationRefused("CROSS_TENANT_DELIVERY_REFUSED")
 
