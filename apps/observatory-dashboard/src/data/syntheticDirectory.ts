@@ -1,0 +1,90 @@
+import type { SyntheticAgentRecord } from '../types/observatory';
+
+export const SYNTHETIC_DIRECTORY_AGENTS: SyntheticAgentRecord[] = [
+  {
+    agentRef: "agent-synthetic-one",
+    frameworkKind: "openclaw-like",
+    frameworkLabel: "OpenClaw-Like Engine",
+    registrationStatus: "registered",
+    evidenceClass: "infrastructure_observed",
+    tenantRef: "tenant-alpha",
+    ownerRef: "owner-alpha",
+    supportedScopes: ["a2a-message-send", "a2a-message-receive"],
+    credentialGeneration: 3,
+    revocationEpoch: 1,
+    observedAtUtc: "2026-11-03T04:22:18Z",
+    description: "Synthetic core agent qualified for bilateral loopback testing and participation scoping."
+  },
+  {
+    agentRef: "agent-synthetic-alpha",
+    frameworkKind: "hermes-like",
+    frameworkLabel: "Hermes-Like Gateway",
+    registrationStatus: "registered",
+    evidenceClass: "infrastructure_observed",
+    tenantRef: "tenant-alpha",
+    ownerRef: "owner-alpha",
+    supportedScopes: ["a2a-message-send", "a2a-message-receive"],
+    credentialGeneration: 2,
+    revocationEpoch: 1,
+    observedAtUtc: "2026-11-03T03:00:00Z",
+    description: "Multi-tenant routing probe agent simulating structured JSON-RPC message exchange."
+  },
+  {
+    agentRef: "agent-synthetic-two",
+    frameworkKind: "custom-agent",
+    frameworkLabel: "Self-Reported External Agent",
+    registrationStatus: "unknown",
+    claimedStatus: "registered",
+    evidenceClass: "agent_reported",
+    tenantRef: "tenant-alpha",
+    ownerRef: "owner-beta",
+    supportedScopes: ["a2a-message-send"],
+    credentialGeneration: 1,
+    revocationEpoch: 1,
+    observedAtUtc: "2026-11-03T00:00:01Z",
+    description: "Agent asserting self-reported registered status without infrastructure verification. Honesty projection: unknown."
+  },
+  {
+    agentRef: "agent-synthetic-three",
+    frameworkKind: "synthetic-evaluator",
+    frameworkLabel: "Unverified Beacon Agent",
+    registrationStatus: "unknown",
+    claimedStatus: "registered",
+    evidenceClass: "unverified",
+    tenantRef: "tenant-gamma",
+    ownerRef: "owner-foreign",
+    supportedScopes: [],
+    credentialGeneration: 0,
+    revocationEpoch: 0,
+    observedAtUtc: "2026-11-03T06:12:00Z",
+    description: "Unauthenticated beacon. External claim cannot bypass local admission seams."
+  },
+  {
+    agentRef: "agent-synthetic-suspended",
+    frameworkKind: "openclaw-like",
+    frameworkLabel: "Suspended Participant",
+    registrationStatus: "suspended",
+    evidenceClass: "infrastructure_observed",
+    tenantRef: "tenant-alpha",
+    ownerRef: "owner-alpha",
+    supportedScopes: ["a2a-message-receive"],
+    credentialGeneration: 2,
+    revocationEpoch: 1,
+    observedAtUtc: "2026-11-03T02:10:00Z",
+    description: "Temporarily suspended by operator. All inbound/outbound delivery refused fail-closed."
+  },
+  {
+    agentRef: "agent-synthetic-revoked",
+    frameworkKind: "hermes-like",
+    frameworkLabel: "Revoked Identity",
+    registrationStatus: "revoked",
+    evidenceClass: "infrastructure_observed",
+    tenantRef: "tenant-alpha",
+    ownerRef: "owner-alpha",
+    supportedScopes: ["a2a-message-send", "a2a-message-receive"],
+    credentialGeneration: 1,
+    revocationEpoch: 2,
+    observedAtUtc: "2026-11-03T07:40:15Z",
+    description: "Revoked credential epoch. Constitutional rule: REVOCATION_OVERRIDES_PRIOR_APPROVAL."
+  }
+];
