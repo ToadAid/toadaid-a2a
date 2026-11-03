@@ -2,7 +2,13 @@
 
 P0D-A2 extends this package with a fourth fail-closed seam: a trusted
 credential-lifecycle state source (admission.lifecycle) enforcing
-REVOCATION_OVERRIDES_PRIOR_APPROVAL on every admission.
+REVOCATION_OVERRIDES_PRIOR_APPROVAL on every admission. P0D-A3A adds an
+OPTIONAL, explicitly provisioned restart-safe checkpoint
+(admission.checkpoint): historical locally recorded anti-rollback state
+(high-watermarks and severe-status latches) durably committed by atomic
+SQLite transactions BEFORE an admission result may be returned — never a
+substitute for the CURRENT trusted lifecycle source, never durable
+message history.
 
 Framework-neutral A2A participation and message-routing core, independent
 of the future website (the website belongs to Codex; nothing HTTP exists
@@ -36,6 +42,20 @@ Fail-closed by construction:
     IN-MEMORY high-watermarks detect state rollback (non-durable across
     restart). Timestamp validation is not cryptographic evidence
     authentication. No lifecycle source means refusal.
+  * Restart-safe checkpoint (P0D-A3A, OPTIONAL): with an explicitly
+    provisioned durable checkpoint injected, every validated, FRESH
+    lifecycle observation is atomically recorded before any admission
+    result — including a severe status recorded BEFORE its refusal —
+    so rotated generations, bumped epochs and severe-status latches
+    survive an ordinary process restart. Missing / unsupported /
+    corrupt / malformed checkpoint, failed transaction or commit, and
+    closed connections all REFUSE; there is no silent fall-back to the
+    empty in-memory mode. The checkpoint is not a lifecycle authority
+    and not durable message history: the journal stays IN-MEMORY and
+    metadata-only in this cut. SQLite atomicity covers local
+    transactions and ordinary restarts only — not privileged host
+    tampering, whole-database rollback, storage loss, or compromised
+    trusted sources.
   * Every admission binds agent identity, owner/controller, tenant, status,
     credential generation, revocation epoch, evidence expiry and the exact
     A2A participation scope. None of these implies another automatically.
