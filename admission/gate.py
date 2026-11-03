@@ -39,6 +39,24 @@ watermark is IN-MEMORY ONLY — it provides no durable rollback protection
 after process restart, and no cryptographic provenance is invented.
 No agent-supplied claim can establish its own current credential state.
 
+R1 qualification (review 5756293645, Director-approved policy, both
+in-memory only — neither protects against revocations missed between
+observations or across a process restart):
+  * SEVERE-STATUS LATCH. Once an identity is observed "revoked" or
+    "disabled", re-registration refuses (LIFECYCLE_REACTIVATION_NOT_
+    CURRENT) unless the trusted source reports a STRICTLY newer
+    revocation epoch than the epoch observed at the severe status. A
+    generation-only increase is insufficient. Recovery from a plain
+    suspension at an unchanged epoch remains legitimate and does not
+    latch.
+  * OBSERVATION FRESHNESS. observedAtUtc is checked against the trusted
+    clock at trusted gate-configuration limits (300 s maximum age, 30 s
+    maximum future skew, no grace period; inclusive boundaries — an
+    observation exactly 300 s old and exactly 30 s ahead both admit).
+    The limits are never request-provided values. Timestamp validation
+    is NOT cryptographic evidence authentication: it proves shape and
+    recency only, never who authenticated the observation.
+
 Preserved invariant: A2A_CHAT_HAS_ZERO_EXECUTION_AUTHORITY — an admitted
 message authorizes no tool, payment, wallet, deployment, protected-host
 mutation, or registration change. Authority flags are all false by
@@ -96,6 +114,8 @@ __all__ = [
     "MAX_MESSAGE_BODY_CHARS",
     "MAX_REQUEST_BYTES",
     "MAX_JOURNAL_ENTRIES",
+    "LIFECYCLE_MAX_OBSERVATION_AGE_SECONDS",
+    "LIFECYCLE_MAX_OBSERVATION_FUTURE_SKEW_SECONDS",
     "REQUEST_KEYS",
     "PRINCIPAL_KEYS",
     "RECIPIENT_KEYS",
@@ -122,6 +142,15 @@ MESSAGE_TYPES = frozenset({"conversation_message", "task_update", "status_report
 MAX_MESSAGE_BODY_CHARS = 256
 MAX_REQUEST_BYTES = 8192
 MAX_JOURNAL_ENTRIES = 1024
+
+# P0D-A2/R1 — Director-approved lifecycle observation-freshness limits.
+# TRUSTED GATE CONFIGURATION — never request-provided, never agent-
+# supplied. Inclusive boundaries: an observation exactly 300 seconds old
+# ADMITS (301 seconds refuses); exactly 30 seconds in the future ADMITS
+# (31 seconds refuses). No grace period. Timestamp validation is not
+# cryptographic evidence authentication.
+LIFECYCLE_MAX_OBSERVATION_AGE_SECONDS = 300
+LIFECYCLE_MAX_OBSERVATION_FUTURE_SKEW_SECONDS = 30
 
 REQUEST_KEYS = frozenset({
     "agentRef", "tenantRef", "ownerRef", "participationScope",
@@ -364,10 +393,20 @@ class RegisteredAgentGate:
         self.trusted_lifecycle_source = trusted_lifecycle_source
         self.now = now
         self.journal = journal if journal is not None else AdmissionJournal()
-        # P0D-A2: per-agent monotonic high-watermark over SOURCE-reported
-        # lifecycle counters, detecting state rollback. IN-MEMORY ONLY —
-        # no durable rollback protection survives process restart.
+        # P0D-A2: per-identity monotonic high-watermark over SOURCE-reported
+        # lifecycle counters, detecting state rollback. Keyed by the FULL
+        # verified identity context (agentRef, tenantRef, ownerRef), so
+        # otherwise-valid identities sharing an agentRef across tenants or
+        # owners cannot contaminate each other. IN-MEMORY ONLY — no durable
+        # rollback protection survives process restart.
         self._lifecycle_high_water = {}
+        # P0D-A2/R1: per-identity severe-status latch — the highest
+        # revocation epoch ever observed with status "revoked"/"disabled".
+        # Reactivation requires a strictly newer revocation epoch;
+        # suspension never latches. IN-MEMORY ONLY — it provides no
+        # protection against revocations missed between observations or
+        # across a process restart.
+        self._lifecycle_severe = {}
 
     # -- caller identity -------------------------------------------------
 
@@ -403,12 +442,16 @@ class RegisteredAgentGate:
         """Compare a verified decision against CURRENT lifecycle state.
 
         Fails closed: no source -> refusal; source unavailable -> refusal;
-        malformed / tampered / identity-mismatched state -> refusal; any
+        malformed / tampered / identity-mismatched state -> refusal; an
+        observation outside the trusted freshness window -> refusal; any
         status but "registered" -> refusal; a decision whose generation
         or revocation epoch is not the CURRENT value -> refusal; and a
-        source reporting a counter BELOW this gate's per-agent
-        high-watermark (state rollback) -> refusal. The watermark is
-        IN-MEMORY only and provides no durable protection across a
+        source reporting a counter BELOW this gate's per-identity
+        high-watermark (state rollback) -> refusal. After a severe status
+        ("revoked"/"disabled") has ever been observed, re-registration is
+        refused unless the revocation epoch is strictly newer
+        (LIFECYCLE_REACTIVATION_NOT_CURRENT). Watermark and latch are
+        IN-MEMORY only and provide no durable protection across a
         process restart.
         """
         source = self.trusted_lifecycle_source
@@ -438,7 +481,29 @@ class RegisteredAgentGate:
             if state[field] != identity_query[field]:
                 raise ParticipationRefused("LIFECYCLE_STATE_IDENTITY_MISMATCH")
 
-        watermark = self._lifecycle_high_water.get(identity_query["agentRef"])
+        # R1 (5756293645) — observation freshness against the trusted
+        # clock. Trusted gate configuration; request data can never move
+        # the limits. Inclusive boundaries: exactly MAX_AGE seconds old
+        # and exactly MAX_SKEW seconds ahead both admit; anything older
+        # or further ahead refuses. The stamp already survived the
+        # strict syntax/calendar rebuild above; this compares recency,
+        # NOT cryptographic authentication of the observation.
+        now = self._now_utc()
+        observed = parse_iso_utc(state["observedAtUtc"])
+        if observed > now + datetime.timedelta(
+                seconds=LIFECYCLE_MAX_OBSERVATION_FUTURE_SKEW_SECONDS):
+            raise ParticipationRefused(
+                "LIFECYCLE_OBSERVATION_SKEW_EXCEEDED")
+        if observed < now - datetime.timedelta(
+                seconds=LIFECYCLE_MAX_OBSERVATION_AGE_SECONDS):
+            raise ParticipationRefused("LIFECYCLE_OBSERVATION_STALE")
+
+        # Key both state trackers by the FULL verified identity context
+        # (R1 isolation check): identities that share an agentRef across
+        # tenants or owners have independent watermarks and latches.
+        identity_key = (state["agentRef"], state["tenantRef"],
+                        state["ownerRef"])
+        watermark = self._lifecycle_high_water.get(identity_key)
         if watermark is None:
             watermark = {"generation": state["currentCredentialGeneration"],
                          "epoch": state["currentRevocationEpoch"]}
@@ -455,17 +520,32 @@ class RegisteredAgentGate:
                 "epoch": max(watermark["epoch"],
                              state["currentRevocationEpoch"]),
             }
-        self._lifecycle_high_water[identity_query["agentRef"]] = watermark
+        self._lifecycle_high_water[identity_key] = watermark
 
         status = state["lifecycleStatus"]
         if status == "registered":
-            pass
+            # R1 — severe-status latch: once this identity was ever
+            # observed "revoked" or "disabled", only a STRICTLY newer
+            # revocation epoch re-authorizes it. A generation-only
+            # increase is insufficient. Suspension never latches, so
+            # unchanged-epoch suspension recovery stays legitimate.
+            severe_epoch = self._lifecycle_severe.get(identity_key)
+            if severe_epoch is not None \
+                    and state["currentRevocationEpoch"] <= severe_epoch:
+                raise ParticipationRefused(
+                    "LIFECYCLE_REACTIVATION_NOT_CURRENT")
         elif status == "revoked":
+            latched = self._lifecycle_severe.get(identity_key, 0)
+            self._lifecycle_severe[identity_key] = max(
+                latched, state["currentRevocationEpoch"])
             raise ParticipationRefused("LIFECYCLE_STATUS_REVOKED")
         elif status == "suspended":
             raise ParticipationRefused("LIFECYCLE_STATUS_SUSPENDED")
         elif status == "disabled":
             # Emergency disablement — no silent path back to admission.
+            latched = self._lifecycle_severe.get(identity_key, 0)
+            self._lifecycle_severe[identity_key] = max(
+                latched, state["currentRevocationEpoch"])
             raise ParticipationRefused("LIFECYCLE_STATUS_DISABLED")
         else:
             raise ParticipationRefused("LIFECYCLE_STATUS_UNKNOWN")

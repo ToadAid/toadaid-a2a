@@ -38,7 +38,7 @@ from admission.model import build_registration_decision
 from observatory.model import ObservatoryRefusal
 
 _NOW = datetime.datetime(2026, 11, 3, 12, 0, 0)
-_OBSERVED = "2026-11-03T10:00:00Z"
+_OBSERVED = "2026-11-03T11:59:00Z"  # fresh per P0D-A2/R1 policy (60 s before _NOW)
 
 _ALL_AUTHORITY_FLAGS = {
     "executionAuthorized", "toolUseAuthorized", "paymentAuthorized",
@@ -508,8 +508,16 @@ class RevocationEpochTests(unittest.TestCase):
         self.assertEqual(len(gate.journal.entries()), 0)
 
     def test_reactivation_cannot_silently_restore_stale_credentials(self):
-        # Revoked at epoch 2, then re-registered: the OLD decision (epoch
-        # 1) still refuses — reactivation does not revive stale evidence.
+        # R1 policy change (review 5756293645, Director-approved): this
+        # test previously permitted SAME-EPOCH severe-status recovery —
+        # after revoked@2 it admitted a fresh decision at registered@2.
+        # The approved severe-status latch makes that rule stricter, and
+        # this test was UPDATED to demonstrate it explicitly: a strictly
+        # newer revocation epoch (2 -> 3) is now REQUIRED. The old
+        # epoch-1 decision still refuses; the same-epoch fresh decision
+        # now refuses LIFECYCLE_REACTIVATION_NOT_CURRENT (newly enforced)
+        # where REVOCATION_EPOCH_STALE used to fire first; only an
+        # epoch-3 source and a fresh epoch-3 decision admit.
         gate, cred, states, decisions = self._gate()
         states["agent-alpha-one"] = lifecycle(status="revoked", epoch=2)
         with self.assertRaisesRegex(ParticipationRefused,
@@ -517,10 +525,17 @@ class RevocationEpochTests(unittest.TestCase):
             gate.authorize(request(), cred)
         states["agent-alpha-one"] = lifecycle(status="registered", epoch=2)
         with self.assertRaisesRegex(ParticipationRefused,
+                                    "LIFECYCLE_REACTIVATION_NOT_CURRENT"):
+            gate.authorize(request(), cred)
+        # A strictly newer epoch re-registers, but the OLD epoch-1
+        # decision still refuses on its own.
+        states["agent-alpha-one"] = lifecycle(status="registered", epoch=3)
+        with self.assertRaisesRegex(ParticipationRefused,
                                     "REVOCATION_EPOCH_STALE"):
             gate.authorize(request(), cred)
-        # Only fresh evidence at the CURRENT epoch and generation admits.
-        decisions["agent-alpha-one"] = decision(generation=2, epoch=2)
+        # Only a fresh decision matching the CURRENT epoch and
+        # generation admits.
+        decisions["agent-alpha-one"] = decision(generation=2, epoch=3)
         gate.trusted_registration_adapter = synthetic_registration_adapter(
             decisions)
         receipt = gate.authorize(request(), cred)
@@ -832,6 +847,430 @@ class LifecycleContractTests(unittest.TestCase):
         for status in sorted(LIFECYCLE_STATUSES):
             record = lifecycle(status=status)
             self.assertNotIn("authorityFlags", record)
+
+
+class SevereStatusLatchTests(unittest.TestCase):
+    """A2A-P0D-A2-R1 — the severe-status latch (review 5756293645, R1-A).
+
+    Policy (Director-approved): once a VALID lifecycle observation
+    reports "revoked" or "disabled" for an identity, the gate refuses
+    later "registered" observations unless the trusted source reports a
+    STRICTLY newer revocation epoch (LIFECYCLE_REACTIVATION_NOT_CURRENT).
+    A generation-only increase is insufficient. Suspension never latches,
+    so unchanged-epoch suspension recovery stays legitimate. The latch is
+    IN-MEMORY ONLY — it provides no protection against revocations missed
+    between observations or across a process restart."""
+
+    def _authorize(self, gate, cred):
+        return gate.authorize(request(), cred)
+
+    def test_reactivation_same_epoch_after_revocation_refused(self):
+        # Control 1 — registered -> revoked -> registered, same epoch.
+        gate, cred, states, _ = single_party()
+        self._authorize(gate, cred)
+        states["agent-alpha-one"] = lifecycle(status="revoked")
+        with self.assertRaisesRegex(ParticipationRefused,
+                                    "LIFECYCLE_STATUS_REVOKED"):
+            self._authorize(gate, cred)
+        states["agent-alpha-one"] = lifecycle(status="registered")
+        with self.assertRaisesRegex(ParticipationRefused,
+                                    "LIFECYCLE_REACTIVATION_NOT_CURRENT"):
+            self._authorize(gate, cred)
+
+    def test_reactivation_same_epoch_after_disablement_refused(self):
+        # Control 2 — the same shape with emergency disablement.
+        gate, cred, states, _ = single_party()
+        self._authorize(gate, cred)
+        states["agent-alpha-one"] = lifecycle(status="disabled")
+        with self.assertRaisesRegex(ParticipationRefused,
+                                    "LIFECYCLE_STATUS_DISABLED"):
+            self._authorize(gate, cred)
+        states["agent-alpha-one"] = lifecycle(status="registered")
+        with self.assertRaisesRegex(ParticipationRefused,
+                                    "LIFECYCLE_REACTIVATION_NOT_CURRENT"):
+            self._authorize(gate, cred)
+
+    def test_generation_increase_alone_does_not_lift_the_latch(self):
+        # Control 3 — gen 3 with the SAME revocation epoch: insufficient.
+        gate, cred, states, decisions = single_party()
+        self._authorize(gate, cred)
+        states["agent-alpha-one"] = lifecycle(status="revoked")  # epoch 1
+        with self.assertRaisesRegex(ParticipationRefused,
+                                    "LIFECYCLE_STATUS_REVOKED"):
+            self._authorize(gate, cred)
+        states["agent-alpha-one"] = lifecycle(status="registered",
+                                              generation=3)
+        decisions["agent-alpha-one"] = decision(generation=3)
+        gate.trusted_registration_adapter = synthetic_registration_adapter(
+            decisions)
+        with self.assertRaisesRegex(ParticipationRefused,
+                                    "LIFECYCLE_REACTIVATION_NOT_CURRENT"):
+            self._authorize(gate, cred)
+
+    def test_identical_replay_after_same_epoch_reactivation_refused(self):
+        # Control 4 — an identical journal replay must not survive a
+        # same-epoch severe-status cycle (and appends NO journal entry).
+        gate, cred, states, _ = two_party()
+        req = request()
+        first = gate.route(req, recipient(), cred)
+        self.assertEqual(first["journalResult"], "recorded")
+        states["agent-alpha-one"] = lifecycle(status="revoked")
+        with self.assertRaisesRegex(ParticipationRefused,
+                                    "LIFECYCLE_STATUS_REVOKED"):
+            gate.route(req, recipient(), cred)
+        self.assertEqual(len(gate.journal.entries()), 1)
+        states["agent-alpha-one"] = lifecycle(status="registered")
+        with self.assertRaisesRegex(ParticipationRefused,
+                                    "LIFECYCLE_REACTIVATION_NOT_CURRENT"):
+            gate.route(req, recipient(), cred)
+        self.assertEqual(len(gate.journal.entries()), 1)
+
+    def test_severe_at_epoch_2_then_registration_at_epoch_2_refused(self):
+        # Control 5 — registration AT the severe-observation epoch is not
+        # "strictly newer": refused.
+        gate, cred, states, _ = single_party()
+        self._authorize(gate, cred)
+        states["agent-alpha-one"] = lifecycle(status="revoked", epoch=2)
+        with self.assertRaisesRegex(ParticipationRefused,
+                                    "LIFECYCLE_STATUS_REVOKED"):
+            self._authorize(gate, cred)
+        states["agent-alpha-one"] = lifecycle(status="registered", epoch=2)
+        with self.assertRaisesRegex(ParticipationRefused,
+                                    "LIFECYCLE_REACTIVATION_NOT_CURRENT"):
+            self._authorize(gate, cred)
+
+    def test_severe_at_epoch_2_then_epoch_3_fresh_decision_admits(self):
+        # Control 6 — a strictly newer epoch with a fresh matching
+        # decision admits.
+        gate, cred, states, decisions = single_party()
+        self._authorize(gate, cred)
+        states["agent-alpha-one"] = lifecycle(status="revoked", epoch=2)
+        with self.assertRaisesRegex(ParticipationRefused,
+                                    "LIFECYCLE_STATUS_REVOKED"):
+            self._authorize(gate, cred)
+        states["agent-alpha-one"] = lifecycle(status="registered", epoch=3)
+        decisions["agent-alpha-one"] = decision(generation=2, epoch=3)
+        gate.trusted_registration_adapter = synthetic_registration_adapter(
+            decisions)
+        receipt = self._authorize(gate, cred)
+        self.assertEqual(receipt["decision"], "AUTHORIZED_LOCAL_SYNTHETIC")
+
+    def test_old_epoch_2_decision_after_recovery_at_epoch_3_refused(self):
+        # Control 7 — the pre-revocation decision stays stale evidence
+        # even after legitimate re-registration.
+        gate, cred, states, _ = single_party()
+        self._authorize(gate, cred)
+        states["agent-alpha-one"] = lifecycle(status="revoked", epoch=2)
+        with self.assertRaisesRegex(ParticipationRefused,
+                                    "LIFECYCLE_STATUS_REVOKED"):
+            self._authorize(gate, cred)
+        states["agent-alpha-one"] = lifecycle(status="registered", epoch=3)
+        with self.assertRaisesRegex(ParticipationRefused,
+                                    "REVOCATION_EPOCH_STALE"):
+            self._authorize(gate, cred)
+
+    def test_suspension_recovery_unchanged_epoch_admits(self):
+        # Control 8 — suspension is NOT severe: trusted-source recovery
+        # at an unchanged epoch is legitimate when all else passes.
+        gate, cred, states, _ = single_party()
+        self._authorize(gate, cred)
+        states["agent-alpha-one"] = lifecycle(status="suspended")
+        with self.assertRaisesRegex(ParticipationRefused,
+                                    "LIFECYCLE_STATUS_SUSPENDED"):
+            self._authorize(gate, cred)
+        states["agent-alpha-one"] = lifecycle(status="registered")
+        receipt = self._authorize(gate, cred)
+        self.assertEqual(receipt["decision"], "AUTHORIZED_LOCAL_SYNTHETIC")
+
+    def test_latch_is_in_memory_only_and_disclosed(self):
+        # A restarted gate has no latch memory: the limitation is
+        # disclosed, not hidden.
+        gate, cred, states, _ = single_party()
+        self._authorize(gate, cred)
+        states["agent-alpha-one"] = lifecycle(status="revoked")
+        with self.assertRaisesRegex(ParticipationRefused,
+                                    "LIFECYCLE_STATUS_REVOKED"):
+            self._authorize(gate, cred)
+        resumed_cred = synthetic_caller_credential("fixture-lifecycle-alpha")
+        resumed_states = {"agent-alpha-one": lifecycle(status="registered")}
+        resumed = RegisteredAgentGate(
+            trusted_registration_adapter=synthetic_registration_adapter(
+                {"agent-alpha-one": decision()}),
+            trusted_caller_verifier=synthetic_caller_verifier({
+                resumed_cred: {"agentRef": "agent-alpha-one",
+                               "tenantRef": "tenant-alpha",
+                               "ownerRef": "owner-alpha"},
+            }),
+            trusted_lifecycle_source=mutable_lifecycle_source(
+                resumed_states),
+            now=lambda: _NOW, journal=AdmissionJournal())
+        receipt = resumed.authorize(request(), resumed_cred)
+        self.assertEqual(receipt["decision"], "AUTHORIZED_LOCAL_SYNTHETIC")
+        self.assertIn("IN-MEMORY", gate_module.__doc__)
+        self.assertIn("revocations missed", gate_module.__doc__)
+
+
+class ObservationFreshnessTests(unittest.TestCase):
+    """A2A-P0D-A2-R1 — Director-approved observation-freshness policy.
+
+    Trusted-clock window: LIFECYCLE_MAX_OBSERVATION_AGE_SECONDS (300)
+    maximum age and LIFECYCLE_MAX_OBSERVATION_FUTURE_SKEW_SECONDS (30)
+    maximum future skew, both INCLUSIVE at the exact boundary (exactly
+    300 s old and exactly 30 s ahead admit), no grace period. Trusted
+    gate configuration — never request-provided values. Timestamp
+    validation is not cryptographic evidence authentication."""
+
+    def _gate_with_observation(self, observed):
+        states = {"agent-alpha-one": lifecycle(observed=observed)}
+        cred = synthetic_caller_credential("fixture-lifecycle-alpha")
+        gate = RegisteredAgentGate(
+            trusted_registration_adapter=synthetic_registration_adapter(
+                {"agent-alpha-one": decision()}),
+            trusted_caller_verifier=synthetic_caller_verifier({
+                cred: {"agentRef": "agent-alpha-one",
+                       "tenantRef": "tenant-alpha",
+                       "ownerRef": "owner-alpha"},
+            }),
+            trusted_lifecycle_source=mutable_lifecycle_source(states),
+            now=lambda: _NOW)
+        return gate, cred
+
+    def test_freshness_boundary_semantics(self):
+        cases = [
+            ("exactly 300 seconds old", "2026-11-03T11:55:00Z", None),
+            ("301 seconds old", "2026-11-03T11:54:59Z",
+             "LIFECYCLE_OBSERVATION_STALE"),
+            ("one second old", "2026-11-03T11:59:59Z", None),
+            ("exactly 30 seconds in the future", "2026-11-03T12:00:30Z",
+             None),
+            ("31 seconds in the future", "2026-11-03T12:00:31Z",
+             "LIFECYCLE_OBSERVATION_SKEW_EXCEEDED"),
+            ("months-old evidence", "2026-01-01T00:00:00Z",
+             "LIFECYCLE_OBSERVATION_STALE"),
+            ("years-in-future evidence", "2030-01-01T00:00:00Z",
+             "LIFECYCLE_OBSERVATION_SKEW_EXCEEDED"),
+            ("valid recent evidence", "2026-11-03T11:59:00Z", None),
+        ]
+        for label, stamp, refusal in cases:
+            with self.subTest(observation=label):
+                gate, cred = self._gate_with_observation(stamp)
+                if refusal is None:
+                    receipt = gate.authorize(request(), cred)
+                    self.assertEqual(receipt["decision"],
+                                     "AUTHORIZED_LOCAL_SYNTHETIC")
+                else:
+                    with self.assertRaisesRegex(ParticipationRefused,
+                                                refusal):
+                        gate.authorize(request(), cred)
+
+    def test_stale_observation_refusal_writes_no_journal_entry(self):
+        gate, cred, states, _ = two_party()
+        states["agent-alpha-one"] = lifecycle(
+            observed="2026-01-01T00:00:00Z")
+        states["agent-beta-one"] = lifecycle(
+            agent_ref="agent-beta-one", owner_ref="owner-beta",
+            observed="2026-01-01T00:00:00Z")
+        with self.assertRaisesRegex(ParticipationRefused,
+                                    "LIFECYCLE_OBSERVATION_STALE"):
+            gate.route(request(), recipient(), cred)
+        self.assertEqual(len(gate.journal.entries()), 0)
+
+    def test_stale_recipient_refused_independently(self):
+        # Sender and recipient must EACH pass freshness: only the
+        # recipient's observation is stale here.
+        gate, cred, states, _ = two_party()
+        states["agent-beta-one"] = lifecycle(
+            agent_ref="agent-beta-one", owner_ref="owner-beta",
+            observed="2026-01-01T00:00:00Z")
+        with self.assertRaisesRegex(ParticipationRefused,
+                                    "LIFECYCLE_OBSERVATION_STALE"):
+            gate.route(request(), recipient(), cred)
+        self.assertEqual(len(gate.journal.entries()), 0)
+
+    def test_missing_clock_refuses(self):
+        # The trusted clock is a required seam everywhere lifecycle
+        # freshness can be evaluated; without it nothing admits.
+        cred = synthetic_caller_credential("fixture-lifecycle-alpha")
+        gate = RegisteredAgentGate(
+            trusted_registration_adapter=synthetic_registration_adapter(
+                {"agent-alpha-one": decision()}),
+            trusted_caller_verifier=synthetic_caller_verifier({
+                cred: {"agentRef": "agent-alpha-one",
+                       "tenantRef": "tenant-alpha",
+                       "ownerRef": "owner-alpha"},
+            }),
+            trusted_lifecycle_source=mutable_lifecycle_source(
+                {"agent-alpha-one": lifecycle()}),
+            now=None)
+        with self.assertRaisesRegex(ParticipationRefused,
+                                    "CLOCK_SOURCE_REQUIRED"):
+            gate.authorize(request(), cred)
+
+    def test_malformed_observation_stamp_refused_at_model(self):
+        # The strict syntax/calendar stamp check keeps firing at the
+        # model boundary; freshness recency is a separate, second check.
+        states = {"agent-alpha-one": dict(
+            lifecycle(), observedAtUtc="not-a-stamp")}
+        cred = synthetic_caller_credential("fixture-lifecycle-alpha")
+        gate = RegisteredAgentGate(
+            trusted_registration_adapter=synthetic_registration_adapter(
+                {"agent-alpha-one": decision()}),
+            trusted_caller_verifier=synthetic_caller_verifier({
+                cred: {"agentRef": "agent-alpha-one",
+                       "tenantRef": "tenant-alpha",
+                       "ownerRef": "owner-alpha"},
+            }),
+            trusted_lifecycle_source=mutable_lifecycle_source(states),
+            now=lambda: _NOW)
+        with self.assertRaisesRegex(ObservatoryRefusal,
+                                    "LIFECYCLE_OBSERVED_AT_NOT_ADMITTED"):
+            gate.authorize(request(), cred)
+
+    def test_expired_registration_evidence_refused_despite_fresh_lifecycle(self):
+        # Decision evidence expiry (P0D-A1) still dominates: fresh
+        # lifecycle observation cannot resurrect expired registration
+        # evidence. The decision's own observation stamp is 11:59:00Z;
+        # its evidence expired a second later, still over the gate's
+        # freshness window for the lifecycle record.
+        expired_decision = build_registration_decision(
+            agent_ref="agent-alpha-one", owner_ref="owner-alpha",
+            tenant_ref="tenant-alpha", registration_status="registered",
+            credential_generation=2, revocation_epoch=1,
+            framework="unspecified",
+            adapter_id="synthetic-offline-registration-adapter",
+            decision_observed_at_utc="2026-11-03T11:59:00Z",
+            evidence_expires_at_utc="2026-11-03T11:59:59Z",
+            participation_scopes=("a2a-message-send",
+                                  "a2a-message-receive"))
+        states = {"agent-alpha-one": lifecycle(observed="2026-11-03T11:59:00Z")}
+        cred = synthetic_caller_credential("fixture-lifecycle-alpha")
+        gate = RegisteredAgentGate(
+            trusted_registration_adapter=synthetic_registration_adapter(
+                {"agent-alpha-one": expired_decision}),
+            trusted_caller_verifier=synthetic_caller_verifier({
+                cred: {"agentRef": "agent-alpha-one",
+                       "tenantRef": "tenant-alpha",
+                       "ownerRef": "owner-alpha"},
+            }),
+            trusted_lifecycle_source=mutable_lifecycle_source(states),
+            now=lambda: _NOW)
+        with self.assertRaisesRegex(ParticipationRefused,
+                                    "REGISTRATION_EVIDENCE_EXPIRED"):
+            gate.authorize(request(), cred)
+
+    def test_freshness_limits_are_trusted_gate_configuration(self):
+        self.assertEqual(
+            gate_module.LIFECYCLE_MAX_OBSERVATION_AGE_SECONDS, 300)
+        self.assertEqual(
+            gate_module.LIFECYCLE_MAX_OBSERVATION_FUTURE_SKEW_SECONDS, 30)
+        self.assertIn("cryptographic evidence authentication",
+                      gate_module.__doc__)
+
+
+class IdentityContextIsolationTests(unittest.TestCase):
+    """A2A-P0D-A2-R1 mission §4 — tracker-key isolation.
+
+    The watermark and severe-status latch must key on the FULL verified
+    identity context (agentRef, tenantRef, ownerRef), not the agentRef
+    alone: with an agentRef-only key, two otherwise-valid identities
+    sharing an agentRef contaminate each other's trackers (a low-epoch
+    state for one identity trips the other's CREDENTIAL_STATE_ROLLBACK;
+    a severe latch for one identity blocks the other). The shipped
+    synthetic ADAPTER cannot represent two identities under one agentRef
+    (its dict is agentRef-keyed), but both the adapter and the lifecycle
+    source are INJECTED seams — general implementations may key on the
+    full context — so the isolation property is proven here with an
+    explicit identity-aware adapter/source pair. Cross-tenant DELIVERY
+    refusal is untouched."""
+
+    @staticmethod
+    def _cross_identity_gate():
+        cred_a = synthetic_caller_credential("probe-r1-alpha")
+        cred_b = synthetic_caller_credential("probe-r1-gamma")
+        decisions = {
+            ("agent-shared-ref", "tenant-alpha", "owner-alpha"):
+                decision(agent_ref="agent-shared-ref",
+                         tenant_ref="tenant-alpha", owner_ref="owner-alpha",
+                         generation=2, epoch=5),
+            ("agent-shared-ref", "tenant-beta", "owner-gamma"):
+                decision(agent_ref="agent-shared-ref",
+                         tenant_ref="tenant-beta", owner_ref="owner-gamma",
+                         generation=2, epoch=1),
+        }
+        states = {
+            ("agent-shared-ref", "tenant-alpha", "owner-alpha"):
+                lifecycle(agent_ref="agent-shared-ref",
+                          tenant_ref="tenant-alpha", owner_ref="owner-alpha",
+                          generation=2, epoch=5),
+            ("agent-shared-ref", "tenant-beta", "owner-gamma"):
+                lifecycle(agent_ref="agent-shared-ref",
+                          tenant_ref="tenant-beta", owner_ref="owner-gamma",
+                          generation=2, epoch=1),
+        }
+        adapter = lambda q: copy.deepcopy(
+            decisions[(q["agentRef"], q["tenantRef"], q["ownerRef"])])
+        source = lambda q: copy.deepcopy(
+            states[(q["agentRef"], q["tenantRef"], q["ownerRef"])])
+        gate = RegisteredAgentGate(
+            trusted_registration_adapter=adapter,
+            trusted_caller_verifier=synthetic_caller_verifier({
+                cred_a: {"agentRef": "agent-shared-ref",
+                         "tenantRef": "tenant-alpha",
+                         "ownerRef": "owner-alpha"},
+                cred_b: {"agentRef": "agent-shared-ref",
+                         "tenantRef": "tenant-beta",
+                         "ownerRef": "owner-gamma"},
+            }),
+            trusted_lifecycle_source=source,
+            now=lambda: _NOW)
+        return gate, cred_a, cred_b
+
+    def test_shared_agent_ref_has_independent_watermarks(self):
+        # The tenant-alpha identity legitimately observed epoch 5; the
+        # tenant-beta identity legitimately sits at epoch 1. An
+        # agentRef-only key would refuse the second admission with
+        # CREDENTIAL_STATE_ROLLBACK — cross-identity contamination.
+        gate, cred_a, cred_b = self._cross_identity_gate()
+        receipt_a = gate.authorize(request(
+            agent_ref="agent-shared-ref", tenant_ref="tenant-alpha",
+            owner_ref="owner-alpha"), cred_a)
+        self.assertEqual(receipt_a["decision"], "AUTHORIZED_LOCAL_SYNTHETIC")
+        receipt_b = gate.authorize(request(
+            agent_ref="agent-shared-ref", tenant_ref="tenant-beta",
+            owner_ref="owner-gamma"), cred_b)
+        self.assertEqual(receipt_b["decision"], "AUTHORIZED_LOCAL_SYNTHETIC")
+
+    def test_shared_agent_ref_has_independent_latches(self):
+        # A severe status observed for the tenant-beta identity must not
+        # latch the tenant-alpha identity (same agentRef, different
+        # owner/tenant).
+        gate, cred_a, cred_b = self._cross_identity_gate()
+        states = {
+            ("agent-shared-ref", "tenant-beta", "owner-gamma"):
+                lifecycle(agent_ref="agent-shared-ref",
+                          tenant_ref="tenant-beta", owner_ref="owner-gamma",
+                          status="revoked", generation=2, epoch=9),
+        }
+        gate.trusted_lifecycle_source = lambda q: copy.deepcopy(
+            states.get((q["agentRef"], q["tenantRef"], q["ownerRef"])))
+        with self.assertRaisesRegex(ParticipationRefused,
+                                    "LIFECYCLE_STATUS_REVOKED"):
+            gate.authorize(request(
+                agent_ref="agent-shared-ref", tenant_ref="tenant-beta",
+                owner_ref="owner-gamma"), cred_b)
+        # The OTHER identity (tenant-alpha) is unaffected: its own valid
+        # source state still admits.
+        alpha_states = {("agent-shared-ref", "tenant-alpha", "owner-alpha"):
+                        lifecycle(agent_ref="agent-shared-ref",
+                                  tenant_ref="tenant-alpha",
+                                  owner_ref="owner-alpha",
+                                  generation=2, epoch=5)}
+        gate.trusted_lifecycle_source = lambda q: copy.deepcopy(
+            alpha_states.get((q["agentRef"], q["tenantRef"], q["ownerRef"])))
+        receipt = gate.authorize(request(
+            agent_ref="agent-shared-ref", tenant_ref="tenant-alpha",
+            owner_ref="owner-alpha"), cred_a)
+        self.assertEqual(receipt["decision"], "AUTHORIZED_LOCAL_SYNTHETIC")
 
 
 if __name__ == "__main__":

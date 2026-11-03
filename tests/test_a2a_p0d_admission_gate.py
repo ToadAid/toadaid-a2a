@@ -55,6 +55,11 @@ from observatory.model import ObservatoryRefusal
 SECRET_TEXT = "raw-private-conversation-content-should-never-be-journalled"
 
 _OBSERVED = "2026-11-03T10:00:00Z"
+# P0D-A2/R1 — the trusted lifecycle observation stamp must sit inside the
+# approved freshness window relative to _NOW (60 s old); the DECISION's
+# own observation stamp stays at _OBSERVED because decision evidence is
+# bound by its separate expires-check, not by the observation-age limit.
+_LIFECYCLE_OBSERVED = "2026-11-03T11:59:00Z"
 _NOW = datetime.datetime(2026, 11, 3, 12, 0, 0)
 _EXPIRY = "2026-11-04T10:00:00Z"
 
@@ -116,7 +121,7 @@ def recipient(agent_ref="agent-beta-one", tenant_ref="tenant-alpha",
 
 def lifecycle(agent_ref="agent-alpha-one", tenant_ref="tenant-alpha",
               owner_ref="owner-alpha", status="registered",
-              generation=2, epoch=1, observed=_OBSERVED):
+              generation=2, epoch=1, observed=_LIFECYCLE_OBSERVED):
     """Trusted (source-issued) lifecycle state — the CURRENT truth."""
     return build_lifecycle_state(
         agent_ref=agent_ref,
@@ -504,6 +509,10 @@ class UtcEvidenceTests(unittest.TestCase):
     def test_correct_utc_conversion_admits_not_yet_expired(self):
         # 16:00+05:45 == 10:15Z -> evidence expiring 11:00Z is still live
         # (a naive-strip bug would read 16:00 and refuse).
+        # P0D-A2/R1 fixture note: the mirrored lifecycle observation is
+        # pinned inside the approved freshness window relative to THIS
+        # test's clock (10:14Z is 60 s before 10:15Z) — the default
+        # mirror stamp (11:59Z) would sit in the future of this clock.
         d = {"agent-alpha-one": decision(expires="2026-11-03T11:00:00Z")}
         gate = RegisteredAgentGate(
             trusted_registration_adapter=synthetic_registration_adapter(d),
@@ -512,7 +521,8 @@ class UtcEvidenceTests(unittest.TestCase):
                               "tenantRef": "tenant-alpha",
                               "ownerRef": "owner-alpha"},
             }),
-            trusted_lifecycle_source=matching_lifecycle_source(d),
+            trusted_lifecycle_source=matching_lifecycle_source(
+                d, observed="2026-11-03T10:14:00Z"),
             now=lambda: datetime.datetime(
                 2026, 11, 3, 16, 0, 0,
                 tzinfo=datetime.timezone(datetime.timedelta(hours=5, minutes=45))))

@@ -28,6 +28,13 @@ are bounded non-negative integers, and the status vocabulary is a closed
 frozenset whose "disabled" member models EMERGENCY DISABLEMENT. The
 module is an OFFLINE FOUNDATION: no database, identity provider, Portal
 account, external framework, or network is connected here.
+
+R1 qualification (review 5756293645): the gate enforces a severe-status
+reactivation latch (registered after revoked/disabled requires a
+strictly newer revocation epoch) and observation freshness (observedAtUtc
+inside a trusted-clock window of 300 s age / 30 s future skew).
+Timestamp validation in this module remains SYNTAX validation only — it
+is not cryptographic evidence authentication.
 """
 
 import copy
@@ -63,9 +70,15 @@ LIFECYCLE_STATE_KEYS = frozenset({
 
 # Closed, independently defined vocabulary. "registered" is the only
 # admitting status; "suspended", "revoked" and "disabled" all refuse,
-# with "disabled" modeling EMERGENCY DISABLEMENT. A "reactivated" agent
-# appears here as "registered" again — with the CURRENT generation and
-# revocation epoch, never silently restored ones.
+# with "disabled" modeling EMERGENCY DISABLEMENT. "revoked" and
+# "disabled" are SEVERE: the gate latches them per identity (in-memory)
+# and requires a STRICTLY newer currentRevocationEpoch before a later
+# "registered" observation re-admits — a generation-only increase or a
+# restored counter never re-authorizes. Suspension is deliberately not
+# severe: trusted-source suspension recovery at an unchanged epoch
+# stays legitimate. Timestamp validation here is syntactic only; the
+# GATE enforces observation freshness against the trusted clock, and
+# timestamp validation is not cryptographic evidence authentication.
 LIFECYCLE_STATUSES = frozenset({
     "registered", "suspended", "revoked", "disabled",
 })

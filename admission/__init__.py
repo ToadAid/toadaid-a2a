@@ -26,10 +26,16 @@ Fail-closed by construction:
     independently verified, never from agent-supplied claims — and a
     decision must carry the CURRENT credential generation and revocation
     epoch. Revocation, suspension, and emergency disablement refuse
-    delivery; an identical replay after a revocation refuses and appends
-    no journal entry; a per-agent IN-MEMORY high-watermark detects state
-    rollback (non-durable across restart). No lifecycle source means
-    refusal.
+    delivery; revoked/disabled latch per identity (in-memory): only a
+    strictly newer revocation epoch re-admits
+    (LIFECYCLE_REACTIVATION_NOT_CURRENT); suspension recovery at an
+    unchanged epoch stays legitimate. Lifecycle observations must be
+    FRESH against the trusted clock (trusted gate limits: 300 s maximum
+    age, 30 s future skew, inclusive boundaries); an identical replay
+    after a revocation refuses and appends no journal entry; per-identity
+    IN-MEMORY high-watermarks detect state rollback (non-durable across
+    restart). Timestamp validation is not cryptographic evidence
+    authentication. No lifecycle source means refusal.
   * Every admission binds agent identity, owner/controller, tenant, status,
     credential generation, revocation epoch, evidence expiry and the exact
     A2A participation scope. None of these implies another automatically.
