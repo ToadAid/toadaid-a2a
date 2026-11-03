@@ -176,6 +176,22 @@ Ordering notes, deliberately matched to the R1 in-memory semantics:
   on an uncertain connection — every later call meets the closed-
   checkpoint refusal (`CHECKPOINT_WRITE_FAILED`), a guarantee pinned by
   a dedicated failure-path test.
+- R2 (review 5758304599): the SAME shared cleanup applies to the
+  SQLite write/COMMIT-failure path (`except sqlite3.Error`). Failure
+  injection through a delegating connection proxy recorded the prior
+  behavior — a failed ROLLBACK left the handle in an open uncertain
+  transaction with the write lock retained ("database is locked" for
+  an independent writer) — and now: a COMMIT failure with a
+  successful ROLLBACK keeps the handle usable (transaction closed,
+  later admission on the same handle succeeds); a COMMIT failure with
+  a FAILED ROLLBACK disposes the handle (later calls refuse
+  `CHECKPOINT_WRITE_FAILED`, the lock is released, independent
+  readers see the last committed state and independent writers
+  proceed). The refusal-code mapping is unchanged; other
+  transaction-cleanup paths were inspected: `provision_checkpoint`
+  already closes its connection on every failure path (no reusable
+  handle can exist) and the BEGIN-failure path never starts a
+  transaction.
 
 ### Transaction and concurrency model
 
@@ -322,7 +338,7 @@ infrastructure.
 ## 10. Verification
 
 `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v` →
-**428 tests OK** (386 baseline preserved + 42 new:
+**431 tests OK** (386 baseline preserved + 45 new:
 `CheckpointContractTests` 8, `RestartRotationTests` 1, `RestartRevocationTests` 2,
 `RestartRecoveryTests` 1, `RestartDisablementTests` 1, `RestartSuspensionTests` 1,
 `IdentityIsolationPersistenceTests` 2, `PersistenceFailureTests` 10,
@@ -330,8 +346,8 @@ infrastructure.
 `MultiprocessConcurrencyTests` 2 — the last two added in response to the
 Director's multi-process review question: separate OS processes, fork
 context, each child opening its own connection on the shared file;
-`R1APathCanonTests` 5 and `R1BTransactionCleanupTests` 5 — security
-hardening from independent review 5757900441, including the
+`R1APathCanonTests` 5, `R1BTransactionCleanupTests` 5 and `R2SqliteErrorCleanupTests` 3 — security
+hardening from reviews 5757900441 and 5758304599, including the
 rollback-failure disposal path demanded by the delivery inspection).
 `git diff --check` clean. No secrets, no network services, no external
 dependencies, no unapproved paths. All implementation changes remain

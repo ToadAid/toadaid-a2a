@@ -64,10 +64,12 @@ P0D-A2 gate is unchanged and stays the default):
     before it propagates, so the write lock is released and other
     writers proceed; refusals that deliberately ended their transaction
     first (stale counter, post-commit reactivation rule) keep their
-    exact semantics. If even the ROLLBACK itself fails, the handle is
-    disposed deterministically: every later call meets the closed-
-    checkpoint refusal rather than an uncertain transactional state
-    (R1-B, review 5757900441).
+    exact semantics. SQLite WRITE/COMMIT failures get the same shared
+    cleanup: a successful ROLLBACK keeps the handle usable; if even
+    the ROLLBACK itself fails, the handle is disposed deterministically
+    — every later call meets the closed-checkpoint refusal rather than
+    an uncertain transactional state (R1-B / R2, reviews 5757900441
+    and 5758304599).
   * Unsupported schema version, foreign database, corrupt database,
     malformed checkpoint records, failed transaction, failed commit,
     read-only database / write failure, closed checkpoint -> refusal.
@@ -404,6 +406,30 @@ class LifeCycleCheckpoint:
             # module, but a tampered file must refuse anyway.
             raise CheckpointRefused("CHECKPOINT_RECORD_MALFORMED")
 
+    # -- transaction cleanup (shared, R2) ------------------------------------
+
+    def _release_uncertain_transaction(self):
+        """Shared cleanup after ANY refusal inside a transaction.
+
+        Ends the active transaction; if even the ROLLBACK itself fails,
+        the connection would remain in an UNCERTAIN open transaction
+        holding the write lock — dispose the handle deterministically
+        (close best-effort, then None) so every later call meets the
+        closed-checkpoint refusal (CHECKPOINT_WRITE_FAILED). This
+        NEVER masks the caller's original refusal: it may only replace
+        the handler's uncertain state with a deterministic one, and the
+        original exception is re-raised after the call.
+        """
+        if self._connection is not None and self._connection.in_transaction:
+            try:
+                self._connection.execute("ROLLBACK")
+            except sqlite3.Error:
+                try:
+                    self._connection.close()
+                except sqlite3.Error:
+                    pass
+                self._connection = None
+
     # -- atomic observation -------------------------------------------------
 
     def apply_observation(self, agent_ref, tenant_ref, owner_ref,
@@ -512,28 +538,14 @@ class LifeCycleCheckpoint:
             # stale-counter branch COMMITS first; the reactivation rule
             # runs after the commit) must keep their semantics — only
             # roll back when a transaction is still active.
-            if self._connection.in_transaction:
-                try:
-                    self._connection.execute("ROLLBACK")
-                except sqlite3.Error:
-                    # Failed cleanup: a connection that could not even
-                    # ROLLBACK would remain in an UNCERTAIN open
-                    # transaction. It must never be usable for a later
-                    # admission — dispose the handle deterministically so
-                    # every later call meets the closed-checkpoint
-                    # refusal (CHECKPOINT_WRITE_FAILED) instead of
-                    # depending on SQLite's error surface.
-                    try:
-                        self._connection.close()
-                    except sqlite3.Error:
-                        pass
-                    self._connection = None
+            self._release_uncertain_transaction()
             raise
         except sqlite3.Error as exc:
-            try:
-                self._connection.execute("ROLLBACK")
-            except sqlite3.Error:
-                pass
+            # R2 (review 5758304599): the SAME cleanup guarantee for the
+            # write/COMMIT-failure path — a successful ROLLBACK keeps
+            # the handle usable; a FAILED one disposes it instead of
+            # wedging an uncertain open transaction and its write lock.
+            self._release_uncertain_transaction()
             if isinstance(exc, (sqlite3.OperationalError,
                                 sqlite3.ProgrammingError)):
                 raise CheckpointRefused("CHECKPOINT_WRITE_FAILED") from exc

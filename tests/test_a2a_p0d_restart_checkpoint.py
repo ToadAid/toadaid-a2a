@@ -542,6 +542,119 @@ class R1BTransactionCleanupTests(RestartCheckpointTestCase):
         other.execute("ROLLBACK")
 
 
+class _FailingConnectionProxy:
+    """Delegating connection proxy failing SELECTED statements.
+
+    Simulates SQLite write/COMMIT failures and (optionally) a failing
+    ROLLBACK against the real connection — bounded failure injection
+    for the shared transaction-cleanup guarantee (review 5758304599).
+    """
+
+    def __init__(self, connection, fail_prefixes):
+        self._real = connection
+        self._fail = tuple(fail_prefixes)
+
+    @property
+    def in_transaction(self):
+        return self._real.in_transaction
+
+    def execute(self, sql, *args):
+        if sql.strip().upper().startswith(self._fail):
+            raise sqlite3.OperationalError(
+                "simulated failure: " + sql.strip())
+        return self._real.execute(sql, *args)
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+class R2SqliteErrorCleanupTests(RestartCheckpointTestCase):
+    """R2 (review 5758304599): the `except sqlite3.Error` handler in
+    apply_observation previously swallowed a FAILED ROLLBACK — leaving
+    an uncertain open transaction and a retained write lock, the same
+    failure class R1-B fixed for validation refusals. Both handlers now
+    share one cleanup mechanism: successful ROLLBACK keeps the handle
+    usable; a failed one disposes it deterministically."""
+
+    IDENTITY = ("agent-alpha-one", "tenant-alpha", "owner-alpha")
+
+    def _prepared(self):
+        checkpoint = self.provision()
+        checkpoint.apply_observation(*self.IDENTITY, "registered", 1, 1)
+        return checkpoint
+
+    def _independent_writer_ok(self, checkpoint):
+        other = sqlite3.connect(checkpoint.path, isolation_level=None)
+        self.addCleanup(other.close)
+        other.execute("PRAGMA busy_timeout = 500")
+        other.execute("BEGIN IMMEDIATE")
+        other.execute("ROLLBACK")
+        other.close()
+
+    def test_commit_failure_with_successful_rollback_keeps_handle(self):
+        checkpoint = self._prepared()
+        real = checkpoint._connection
+        checkpoint._connection = _FailingConnectionProxy(real, ("COMMIT",))
+        with self.assertRaises(CheckpointRefused) as ctx:
+            checkpoint.apply_observation(*self.IDENTITY,
+                                         "registered", 1, 2)
+        self.assertEqual(ctx.exception.args[0], "CHECKPOINT_WRITE_FAILED")
+        # Successful rollback: transaction closed, handle alive.
+        checkpoint._connection = real
+        self.assertFalse(checkpoint._connection.in_transaction)
+        # A later admission on the SAME handle succeeds.
+        checkpoint.apply_observation(*self.IDENTITY, "registered", 1, 2)
+        self.assertEqual(
+            checkpoint.checkpoint_state(*self.IDENTITY)["highRevocationEpoch"],
+            2)
+        self._independent_writer_ok(checkpoint)
+
+    def test_commit_failure_with_failed_rollback_disposes_handle(self):
+        checkpoint = self._prepared()
+        checkpoint._connection = _FailingConnectionProxy(
+            checkpoint._connection, ("COMMIT", "ROLLBACK"))
+        with self.assertRaises(CheckpointRefused) as ctx:
+            checkpoint.apply_observation(*self.IDENTITY,
+                                         "registered", 1, 2)
+        self.assertEqual(ctx.exception.args[0], "CHECKPOINT_WRITE_FAILED")
+        # Failed rollback: the handle is DISPOSED, not wedged in an
+        # uncertain open transaction.
+        self.assertIsNone(checkpoint._connection)
+        # Disposed-handle refusal: every later call refuses closed-
+        # checkpoint-style; no later admission is possible.
+        with self.assertRaises(CheckpointRefused) as ctx:
+            checkpoint.apply_observation(*self.IDENTITY,
+                                         "registered", 1, 2)
+        self.assertEqual(ctx.exception.args[0], "CHECKPOINT_WRITE_FAILED")
+
+    def test_independent_writer_recovers_after_disposal(self):
+        checkpoint = self._prepared()
+        path = checkpoint.path
+        checkpoint._connection = _FailingConnectionProxy(
+            checkpoint._connection, ("COMMIT", "ROLLBACK"))
+        with self.assertRaises(CheckpointRefused):
+            checkpoint.apply_observation(*self.IDENTITY,
+                                         "registered", 1, 2)
+        self.assertIsNone(checkpoint._connection)
+        # The uncertain transaction never committed: an INDEPENDENT
+        # reader still sees the previously committed state...
+        reader = sqlite3.connect(path)
+        self.addCleanup(reader.close)
+        epoch = reader.execute(
+            "SELECT highRevocationEpoch FROM lifecycle_checkpoint WHERE "
+            "agentRef = ? AND tenantRef = ? AND ownerRef = ?",
+            self.IDENTITY).fetchone()[0]
+        reader.close()
+        self.assertEqual(epoch, 1)
+        # ...and an INDEPENDENT writer acquires the write lock — the
+        # disposed handle released it.
+        other = sqlite3.connect(path, isolation_level=None)
+        self.addCleanup(other.close)
+        other.execute("PRAGMA busy_timeout = 500")
+        other.execute("BEGIN IMMEDIATE")
+        other.execute("ROLLBACK")
+
+
 class RestartRotationTests(RestartCheckpointTestCase):
     """Scenario A — credential rotation survives restart."""
 
