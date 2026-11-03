@@ -106,7 +106,13 @@ Two separated modes:
    temporary RESTRICTED directory (tests chmod 0o700). It refuses an
    existing file (never overwrites or migrates), relative paths, missing
    parent directories, directories, and symlinks — including symlinked
-   ANCESTOR components — (`CHECKPOINT_PATH_NOT_ADMITTED`). Nothing ever
+   ANCESTOR components — (`CHECKPOINT_PATH_NOT_ADMITTED`). It also
+   refuses any NONCANONICAL path spelling (R1-A, review 5757900441):
+   POSIX resolves a symlink component BEFORE "..", so the previous
+   normalize-then-walk order let `<dir>/link/../x.sqlite` validate as
+   `<dir>/x.sqlite` while the kernel actually opened the location the
+   symlink pointed at. The smallest deterministic correction is to
+   require canonical form before any normalization. Nothing ever
    writes into production directories, system services, or existing
    application databases.
 
@@ -156,6 +162,20 @@ Ordering notes, deliberately matched to the R1 in-memory semantics:
   refusal.
 - Rollback refusal raises with NO change (the in-memory gate likewise
   leaves the watermark untouched on rollback).
+- R1-B (review 5757900441): NO validation refusal may leave an open
+  transaction holding the write lock. A refusal raised inside the
+  transaction (e.g. a malformed pre-existing row discovered at
+  read time) is rolled back before it propagates — the connection is
+  left outside the transaction and an INDEPENDENT writer can acquire
+  the lock immediately (tested). Refusals that deliberately ended
+  their transaction first keep their exact semantics: the
+  stale-counter branch commits its zero-change transaction before
+  raising, and the reactivation rule runs after the commit. If even
+  the ROLLBACK itself fails, the handle is DISPOSED deterministically
+  (set unusable): a failed cleanup must never permit a later admission
+  on an uncertain connection — every later call meets the closed-
+  checkpoint refusal (`CHECKPOINT_WRITE_FAILED`), a guarantee pinned by
+  a dedicated failure-path test.
 
 ### Transaction and concurrency model
 
@@ -258,7 +278,13 @@ check-vs-open window is not prevented — the same trust boundary as the
 whole-database-rollback limitation: no protection is claimed against
 privileged host tampering. A racing SWAP TO A FOREIGN or corrupt file,
 by contrast, is caught at open-time verification
-(`CHECKPOINT_SCHEMA_UNSUPPORTED` / `CHECKPOINT_CORRUPT`).
+(`CHECKPOINT_SCHEMA_UNSUPPORTED` / `CHECKPOINT_CORRUPT`). R1-A removed
+the normalize-then-walk ordering FLAW (a `symlink/..` component can no
+longer hide the symlink from validation; canonical form is required
+first — regression-tested, and provisioning through a rejected
+noncanonical path creates NOTHING in either the expected or the
+redirected location), but the check-vs-open TOCTOU race itself REMAINS
+unsolved: no protection is claimed against privileged host tampering.
 
 ## 8. Preserved boundaries
 
@@ -296,14 +322,17 @@ infrastructure.
 ## 10. Verification
 
 `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v` →
-**418 tests OK** (386 baseline preserved + 32 new:
+**428 tests OK** (386 baseline preserved + 42 new:
 `CheckpointContractTests` 8, `RestartRotationTests` 1, `RestartRevocationTests` 2,
 `RestartRecoveryTests` 1, `RestartDisablementTests` 1, `RestartSuspensionTests` 1,
 `IdentityIsolationPersistenceTests` 2, `PersistenceFailureTests` 10,
 `DurabilityBoundaryTests` 3, `InMemoryModeParityTests` 1,
 `MultiprocessConcurrencyTests` 2 — the last two added in response to the
 Director's multi-process review question: separate OS processes, fork
-context, each child opening its own connection on the shared file).
+context, each child opening its own connection on the shared file;
+`R1APathCanonTests` 5 and `R1BTransactionCleanupTests` 5 — security
+hardening from independent review 5757900441, including the
+rollback-failure disposal path demanded by the delivery inspection).
 `git diff --check` clean. No secrets, no network services, no external
 dependencies, no unapproved paths. All implementation changes remain
 UNCOMMITTED; no GitHub writes; STOP before commit, push, PR, merge, or

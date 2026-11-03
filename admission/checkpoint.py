@@ -54,6 +54,20 @@ P0D-A2 gate is unchanged and stays the default):
   * No checkpoint / missing database -> refusal (provisioning is an
     explicit trusted-operator action; the checkpoint never creates or
     upgrades a schema by itself).
+  * Only CANONICAL absolute paths are admitted: any noncanonical
+    spelling (including a "symlink/.." component, double slashes, or a
+    trailing slash) is refused before normalization can discard the
+    very components the symlink walk must examine (R1-A, review
+    5757900441).
+  * A refusal never leaves an open SQLite transaction behind: a
+    validation refusal raised inside BEGIN IMMEDIATE is rolled back
+    before it propagates, so the write lock is released and other
+    writers proceed; refusals that deliberately ended their transaction
+    first (stale counter, post-commit reactivation rule) keep their
+    exact semantics. If even the ROLLBACK itself fails, the handle is
+    disposed deterministically: every later call meets the closed-
+    checkpoint refusal rather than an uncertain transactional state
+    (R1-B, review 5757900441).
   * Unsupported schema version, foreign database, corrupt database,
     malformed checkpoint records, failed transaction, failed commit,
     read-only database / write failure, closed checkpoint -> refusal.
@@ -209,6 +223,18 @@ def _safe_db_path(path):
             or "\x00" in path:
         raise CheckpointRefused("CHECKPOINT_PATH_NOT_ADMITTED")
     if not os.path.isabs(path):
+        raise CheckpointRefused("CHECKPOINT_PATH_NOT_ADMITTED")
+    # R1-A (review 5757900441): reject noncanonical path components
+    # BEFORE normalization would discard information needed for
+    # validation. POSIX resolves a symlink component BEFORE "..", but
+    # os.path.normpath("link/..") removes "link" TEXTUALLY — so a
+    # candidate like <outer>/link/../x.sqlite normalized away the very
+    # component the symlink walk had to examine, while the kernel opens
+    # the REDIRECTED location. Requiring canonical form is the smallest
+    # deterministic policy: any ".", "..", "//", or trailing-slash
+    # spelling is refused outright. This does NOT solve the separately
+    # disclosed privileged check-vs-open TOCTOU race.
+    if os.path.normpath(path) != path:
         raise CheckpointRefused("CHECKPOINT_PATH_NOT_ADMITTED")
     probe = os.path.normpath(path)
     while True:
@@ -478,6 +504,30 @@ class LifeCycleCheckpoint:
                      agent_ref, tenant_ref, owner_ref))
             self._connection.execute("COMMIT")
         except CheckpointRefused:
+            # R1-B (review 5757900441): a validation refusal raised
+            # INSIDE the BEGIN IMMEDIATE transaction must never leave
+            # this connection holding the write lock — another writer
+            # would find the whole file lockable-blocked. Refusals that
+            # have ALREADY ended their transaction deliberately (the
+            # stale-counter branch COMMITS first; the reactivation rule
+            # runs after the commit) must keep their semantics — only
+            # roll back when a transaction is still active.
+            if self._connection.in_transaction:
+                try:
+                    self._connection.execute("ROLLBACK")
+                except sqlite3.Error:
+                    # Failed cleanup: a connection that could not even
+                    # ROLLBACK would remain in an UNCERTAIN open
+                    # transaction. It must never be usable for a later
+                    # admission — dispose the handle deterministically so
+                    # every later call meets the closed-checkpoint
+                    # refusal (CHECKPOINT_WRITE_FAILED) instead of
+                    # depending on SQLite's error surface.
+                    try:
+                        self._connection.close()
+                    except sqlite3.Error:
+                        pass
+                    self._connection = None
             raise
         except sqlite3.Error as exc:
             try:

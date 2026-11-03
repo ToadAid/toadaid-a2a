@@ -277,6 +277,271 @@ class CheckpointContractTests(RestartCheckpointTestCase):
                                   "owner-alpha", 3, 2, None))
 
 
+class R1APathCanonTests(RestartCheckpointTestCase):
+    """R1-A (review 5757900441): a `symlink/..` component used to bypass
+    the symlink walk because os.path.normpath removes `link/..` TEXTUALLY
+    while POSIX resolves the symlink BEFORE ".." — validation examined
+    the normalized path while the kernel opened the REDIRECTED location.
+    Fixed by rejecting noncanonical path components before any
+    normalization. These tests are permanent negative regressions."""
+
+    def _planted(self):
+        """outer/ with outer/link -> victim/child (both 0o700)."""
+        outer = self.checkpoint_dir()
+        victim = self.checkpoint_dir()
+        child = os.path.join(victim, "child")
+        os.mkdir(child, 0o700)
+        os.symlink(child, os.path.join(outer, "link"))
+        return outer, victim, child
+
+    def test_provision_refuses_symlink_dotdot_redirecting_nowhere(self):
+        outer, victim, _child = self._planted()
+        candidate = os.path.join(outer, "link", "..", "probe.sqlite")
+        with self.assertRaises(CheckpointRefused) as ctx:
+            provision_checkpoint(candidate)
+        self.assertEqual(ctx.exception.args[0], "CHECKPOINT_PATH_NOT_ADMITTED")
+        # NO database may appear in the expected OR the redirected place.
+        self.assertFalse(os.path.lexists(
+            os.path.join(outer, "probe.sqlite")))
+        self.assertFalse(os.path.lexists(
+            os.path.join(victim, "probe.sqlite")))
+        # The same canonical-form rule covers other normalization-variant
+        # spellings — they cannot smuggle a second interpretation either.
+        for variant in (os.path.join(outer, "link", "..", "other.db"),
+                        outer + os.sep + "sub" + os.sep + os.sep + "x.db"):
+            with self.assertRaises(CheckpointRefused) as ctx:
+                provision_checkpoint(variant)
+            self.assertEqual(ctx.exception.args[0],
+                             "CHECKPOINT_PATH_NOT_ADMITTED")
+
+    def test_open_refuses_symlink_dotdot_to_existing_checkpoint(self):
+        outer, victim, child = self._planted()
+        real = os.path.join(child, "cp.db")
+        provision_checkpoint(real).close()
+        self.assertTrue(os.path.lexists(real))
+        candidate = os.path.join(outer, "link", "..", "cp.db")
+        with self.assertRaises(CheckpointRefused) as ctx:
+            LifeCycleCheckpoint(candidate)
+        self.assertEqual(ctx.exception.args[0], "CHECKPOINT_PATH_NOT_ADMITTED")
+        with self.assertRaises(CheckpointRefused) as ctx:
+            provision_checkpoint(candidate)
+        self.assertEqual(ctx.exception.args[0], "CHECKPOINT_PATH_NOT_ADMITTED")
+
+    def test_canonical_paths_are_still_admitted(self):
+        # Ordinary valid canonical paths must keep working after the
+        # canonical-form requirement (control for the negative tests).
+        checkpoint = self.provision()
+        checkpoint.apply_observation("agent-alpha-one", "tenant-alpha",
+                                     "owner-alpha", "registered", 1, 1)
+        self.assertEqual(os.path.normpath(checkpoint.path), checkpoint.path)
+        reopened = LifeCycleCheckpoint(checkpoint.path)
+        self.addCleanup(reopened.close)
+        self.assertEqual(
+            reopened.checkpoint_state("agent-alpha-one", "tenant-alpha",
+                                      "owner-alpha")["highRevocationEpoch"],
+            1)
+
+    def test_existing_direct_symlink_refused(self):
+        # R1-A companion negative control: an existing DIRECT symlink to
+        # a provisioned checkpoint is refused for BOTH provisioning and
+        # opening (canonically spelled — refused by the walk, not the
+        # canonical-form rule).
+        checkpoint = self.provision()
+        link = os.path.join(self.checkpoint_dir(), "planted-link.db")
+        os.symlink(checkpoint.path, link)
+        with self.assertRaises(CheckpointRefused) as ctx:
+            provision_checkpoint(link)
+        self.assertEqual(ctx.exception.args[0], "CHECKPOINT_PATH_NOT_ADMITTED")
+        with self.assertRaises(CheckpointRefused) as ctx:
+            LifeCycleCheckpoint(link)
+        self.assertEqual(ctx.exception.args[0], "CHECKPOINT_PATH_NOT_ADMITTED")
+
+    def test_ancestor_symlink_refused(self):
+        # R1-A companion negative control: a canonically spelled path
+        # THROUGH a symlinked directory is refused — the symlink walk
+        # still covers ancestors (canonical-form rule is not the only
+        # layer).
+        outer, victim, child = self._planted()
+        through_link = os.path.join(outer, "link", "cp.db")
+        self.assertEqual(os.path.normpath(through_link), through_link)
+        with self.assertRaises(CheckpointRefused) as ctx:
+            provision_checkpoint(through_link)
+        self.assertEqual(ctx.exception.args[0], "CHECKPOINT_PATH_NOT_ADMITTED")
+        with self.assertRaises(CheckpointRefused) as ctx:
+            LifeCycleCheckpoint(through_link)
+        self.assertEqual(ctx.exception.args[0], "CHECKPOINT_PATH_NOT_ADMITTED")
+
+
+class R1BTransactionCleanupTests(RestartCheckpointTestCase):
+    """R1-B (review 5757900441): a validation refusal raised INSIDE the
+    BEGIN IMMEDIATE transaction used to leave the transaction open and
+    the write lock held. Fixed: any remaining active transaction is
+    rolled back on CheckpointRefused — while refusals that deliberately
+    ended their transaction first keep their exact semantics."""
+
+    IDENTITY = ("agent-alpha-one", "tenant-alpha", "owner-alpha")
+
+    def _tamper_generation(self, path, value):
+        """Persist a malformed counter through an INDEPENDENT connection."""
+        foreign = sqlite3.connect(path, isolation_level=None)
+        self.addCleanup(foreign.close)
+        foreign.execute("PRAGMA busy_timeout = 5000")
+        foreign.execute("UPDATE lifecycle_checkpoint "
+                        "SET highCredentialGeneration = ? "
+                        "WHERE agentRef = ? AND tenantRef = ? AND ownerRef = ?",
+                        (value, *self.IDENTITY))
+        foreign.close()
+
+    def test_malformed_row_refusal_rolls_back_and_releases_lock(self):
+        checkpoint = self.provision()
+        checkpoint.apply_observation(*self.IDENTITY, "registered", 1, 1)
+        self._tamper_generation(checkpoint.path, -1)
+        with self.assertRaises(CheckpointRefused) as ctx:
+            checkpoint.apply_observation(*self.IDENTITY, "registered", 1, 2)
+        self.assertEqual(ctx.exception.args[0], "CHECKPOINT_RECORD_MALFORMED")
+        # 1. no active transaction REMAINS on the refusing connection;
+        self.assertFalse(checkpoint._connection.in_transaction)
+        # 2. ANOTHER INDEPENDENT writer can acquire the write lock;
+        other = sqlite3.connect(checkpoint.path, isolation_level=None)
+        self.addCleanup(other.close)
+        other.execute("PRAGMA busy_timeout = 500")
+        other.execute("BEGIN IMMEDIATE")
+        other.execute("ROLLBACK")
+        other.close()
+        # 3. after the row is restored, the SAME handle makes progress —
+        # the refusal never wedged the checkpoint.
+        self._tamper_generation(checkpoint.path, 1)
+        checkpoint.apply_observation(*self.IDENTITY, "registered", 1, 2)
+        self.assertEqual(
+            checkpoint.checkpoint_state(*self.IDENTITY)["highRevocationEpoch"],
+            2)
+
+    def test_stale_counter_refusal_keeps_its_committed_semantics(self):
+        # The stale-counter branch deliberately COMMITS its zero-change
+        # transaction BEFORE raising — that must stay exactly correct.
+        checkpoint = self.provision()
+        checkpoint.apply_observation(*self.IDENTITY, "registered", 1, 2)
+        with self.assertRaises(CheckpointRefused) as ctx:
+            checkpoint.apply_observation(*self.IDENTITY, "registered", 1, 1)
+        self.assertEqual(ctx.exception.args[0], "CREDENTIAL_STATE_ROLLBACK")
+        self.assertFalse(checkpoint._connection.in_transaction)
+        self.assertEqual(
+            checkpoint.checkpoint_state(*self.IDENTITY)["highRevocationEpoch"],
+            2)
+        # The refusing connection left NOTHING behind for another writer.
+        other = sqlite3.connect(checkpoint.path, isolation_level=None)
+        self.addCleanup(other.close)
+        other.execute("PRAGMA busy_timeout = 500")
+        other.execute("BEGIN IMMEDIATE")
+        other.execute("ROLLBACK")
+
+    def test_reactivation_refusal_leaves_no_active_transaction(self):
+        # The reactivation rule is enforced AFTER the durable commit —
+        # pin that it, too, never leaves a transaction open.
+        checkpoint = self.provision()
+        checkpoint.apply_observation(*self.IDENTITY, "revoked", 1, 2)
+        with self.assertRaises(CheckpointRefused) as ctx:
+            checkpoint.apply_observation(*self.IDENTITY, "registered", 2, 2)
+        self.assertEqual(ctx.exception.args[0],
+                         "LIFECYCLE_REACTIVATION_NOT_CURRENT")
+        self.assertFalse(checkpoint._connection.in_transaction)
+        self.assertEqual(
+            checkpoint.checkpoint_state(*self.IDENTITY)["severeLatchEpoch"],
+            2)
+
+    def test_gate_refuses_malformed_checkpoint_without_journal_entry(self):
+        # End-to-end: the gate refuses with no admission receipt and no
+        # journal entry, and stays operable after the row is restored.
+        checkpoint = self.provision()
+        world = CheckpointWorld()
+        world.add(*self.IDENTITY, generation=1, epoch=1)
+        world.add("agent-beta-one", "tenant-alpha", "owner-beta")
+        gate, cred = build_gate(world, checkpoint)
+        receipt = gate.route(request(message_id="msg-r1b-001"),
+                             recipient("agent-beta-one", "tenant-alpha",
+                                       "owner-beta"),
+                             caller_credential=cred)
+        self.assertEqual(receipt["decision"], "DELIVERED_LOCAL_SYNTHETIC")
+        self.assertEqual(receipt["journalResult"], "recorded")
+        self.assertEqual(len(gate.journal.entries()), 1)
+        self._tamper_generation(checkpoint.path, -1)
+        with self.assertRaises(ParticipationRefused) as ctx:
+            gate.route(request(message_id="msg-r1b-002"),
+                       recipient("agent-beta-one", "tenant-alpha",
+                                 "owner-beta"),
+                       caller_credential=cred)
+        self.assertEqual(ctx.exception.args[0], "CHECKPOINT_RECORD_MALFORMED")
+        # NO successful admission receipt (the refusal above) and NO
+        # journal entry for it.
+        self.assertEqual(len(gate.journal.entries()), 1)
+        self._tamper_generation(checkpoint.path, 1)
+        receipt = gate.route(request(message_id="msg-r1b-003"),
+                             recipient("agent-beta-one", "tenant-alpha",
+                                       "owner-beta"),
+                             caller_credential=cred)
+        self.assertEqual(receipt["journalResult"], "recorded")
+        self.assertEqual(len(gate.journal.entries()), 2)
+
+    def test_failed_rollback_disposes_the_uncertain_handle(self):
+        # §4 inspection requirement: if ROLLBACK ITSELF fails, a failed
+        # cleanup must never permit a later admission on an uncertain
+        # connection. Simulated deterministically: a delegating proxy
+        # that raises on ROLLBACK, restoring the real connection
+        # afterwards for verification.
+        class RollbackFailProxy:
+            def __init__(self, connection):
+                self._real = connection
+
+            @property
+            def in_transaction(self):
+                return self._real.in_transaction
+
+            def execute(self, sql, *args):
+                if sql.strip().upper().startswith("ROLLBACK"):
+                    raise sqlite3.OperationalError(
+                        "simulated rollback failure")
+                return self._real.execute(sql, *args)
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+        checkpoint = self.provision()
+        checkpoint.apply_observation(*self.IDENTITY, "registered", 1, 1)
+        real_connection = checkpoint._connection
+        checkpoint._connection = RollbackFailProxy(real_connection)
+        self._tamper_generation(checkpoint.path, -1)
+        with self.assertRaises(CheckpointRefused) as ctx:
+            checkpoint.apply_observation(*self.IDENTITY,
+                                         "registered", 1, 2)
+        self.assertEqual(ctx.exception.args[0], "CHECKPOINT_RECORD_MALFORMED")
+        # The rollback could not run: the handle is disposed, NOT left
+        # in an uncertain open transaction.
+        self.assertIsNone(checkpoint._connection)
+        # Every later call meets the closed-checkpoint refusal — no
+        # later admission is possible on this handle.
+        with self.assertRaises(CheckpointRefused) as ctx:
+            checkpoint.apply_observation(*self.IDENTITY,
+                                         "registered", 1, 2)
+        self.assertEqual(ctx.exception.args[0], "CHECKPOINT_WRITE_FAILED")
+        # The failed txn never committed anything: disposing (closing)
+        # the connection discarded it — an INDEPENDENT reader sees the
+        # previously committed state and an INDEPENDENT writer can
+        # acquire the lock.
+        reader = sqlite3.connect(checkpoint.path)
+        self.addCleanup(reader.close)
+        epoch = reader.execute(
+            "SELECT highRevocationEpoch FROM lifecycle_checkpoint WHERE "
+            "agentRef = ? AND tenantRef = ? AND ownerRef = ?",
+            self.IDENTITY).fetchone()[0]
+        reader.close()
+        self.assertEqual(epoch, 1)
+        other = sqlite3.connect(checkpoint.path, isolation_level=None)
+        self.addCleanup(other.close)
+        other.execute("PRAGMA busy_timeout = 500")
+        other.execute("BEGIN IMMEDIATE")
+        other.execute("ROLLBACK")
+
+
 class RestartRotationTests(RestartCheckpointTestCase):
     """Scenario A — credential rotation survives restart."""
 
