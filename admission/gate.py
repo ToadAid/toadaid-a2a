@@ -57,6 +57,31 @@ observations or across a process restart):
     is NOT cryptographic evidence authentication: it proves shape and
     recency only, never who authenticated the observation.
 
+Restart-safe checkpoint (P0D-A3A, admission.checkpoint): the watermark
+and the severe-status latch above remain the DEFAULT in-memory mode.
+When the trusted operator explicitly injects a durable checkpoint
+(trusted_checkpoint — an explicitly provisioned sqlite3 store), each
+VALIDATED, FRESH lifecycle observation is compared-and-persisted
+ATOMICALLY (single BEGIN IMMEDIATE transaction, synchronous=FULL,
+database-level writer serialization — no process-local Python lock)
+BEFORE the remaining admission path may proceed; a newly observed
+severe status is recorded BEFORE its refusal is returned, and a
+restarted gate therefore refuses rolled-back counters and same-epoch
+severe-status reactivation exactly as the pre-restart gate did. Check
+mode is fail-closed: missing/unsupported/corrupt/malformed checkpoint,
+failed transaction or failed commit, or a closed checkpoint =>
+ParticipationRefused, NEVER a silent fall-back to the empty in-memory
+state. The checkpoint is NOT a lifecycle authority: the CURRENT trusted
+lifecycle source, its freshness window and every other seam remain
+mandatory. It stores historical locally recorded anti-rollback state
+only — NOT durable message history: the journal below stays IN-MEMORY
+and metadata-only in this cut, so committing a lifecycle checkpoint
+does NOT record a delivery result or restore replay history. SQLite
+provides atomic local transactions and ordinary-crash durability only;
+it cannot establish that the database was not maliciously replaced with
+an older valid copy (no privileged-host-tamper, whole-database-rollback,
+storage-loss, or compromised-source protection is claimed).
+
 Preserved invariant: A2A_CHAT_HAS_ZERO_EXECUTION_AUTHORITY — an admitted
 message authorizes no tool, payment, wallet, deployment, protected-host
 mutation, or registration change. Authority flags are all false by
@@ -100,6 +125,7 @@ from .lifecycle import (
     LIFECYCLE_STATE_KEYS,
     build_lifecycle_state,
 )
+from .checkpoint import CheckpointRefused
 from observatory.model import (
     IDENTIFIER_RE,
     ObservatoryRefusal,
@@ -387,10 +413,11 @@ class RegisteredAgentGate:
 
     def __init__(self, trusted_registration_adapter=None,
                  trusted_caller_verifier=None, trusted_lifecycle_source=None,
-                 now=None, journal=None):
+                 now=None, journal=None, trusted_checkpoint=None):
         self.trusted_registration_adapter = trusted_registration_adapter
         self.trusted_caller_verifier = trusted_caller_verifier
         self.trusted_lifecycle_source = trusted_lifecycle_source
+        self.trusted_checkpoint = trusted_checkpoint
         self.now = now
         self.journal = journal if journal is not None else AdmissionJournal()
         # P0D-A2: per-identity monotonic high-watermark over SOURCE-reported
@@ -399,6 +426,10 @@ class RegisteredAgentGate:
         # otherwise-valid identities sharing an agentRef across tenants or
         # owners cannot contaminate each other. IN-MEMORY ONLY — no durable
         # rollback protection survives process restart.
+        # P0D-A3A: when trusted_checkpoint is injected, these two
+        # structures are BYPASSED in favor of the durable checkpoint
+        # (see _enforce_lifecycle); without one, the gate keeps its
+        # unchanged synthetic in-memory mode.
         self._lifecycle_high_water = {}
         # P0D-A2/R1: per-identity severe-status latch — the highest
         # revocation epoch ever observed with status "revoked"/"disabled".
@@ -450,9 +481,13 @@ class RegisteredAgentGate:
         high-watermark (state rollback) -> refusal. After a severe status
         ("revoked"/"disabled") has ever been observed, re-registration is
         refused unless the revocation epoch is strictly newer
-        (LIFECYCLE_REACTIVATION_NOT_CURRENT). Watermark and latch are
-        IN-MEMORY only and provide no durable protection across a
-        process restart.
+        (LIFECYCLE_REACTIVATION_NOT_CURRENT). In the DEFAULT in-memory
+        mode the watermark and latch are IN-MEMORY only and provide no
+        durable protection across a process restart; in explicit
+        durable-checkpoint mode (P0D-A3A) the same comparisons and the
+        same refusal codes run INSIDE an atomic, durably committed
+        compare-and-update of the injected checkpoint before any
+        admission result can be returned.
         """
         source = self.trusted_lifecycle_source
         if source is None or not callable(source):
@@ -503,52 +538,83 @@ class RegisteredAgentGate:
         # tenants or owners have independent watermarks and latches.
         identity_key = (state["agentRef"], state["tenantRef"],
                         state["ownerRef"])
-        watermark = self._lifecycle_high_water.get(identity_key)
-        if watermark is None:
-            watermark = {"generation": state["currentCredentialGeneration"],
-                         "epoch": state["currentRevocationEpoch"]}
-        else:
-            # Rollback detection: only a source reporting a lower counter
-            # than ever seen before trips this. Equal-or-higher refreshes
-            # the watermark.
-            if state["currentCredentialGeneration"] < watermark["generation"] \
-                    or state["currentRevocationEpoch"] < watermark["epoch"]:
-                raise ParticipationRefused("CREDENTIAL_STATE_ROLLBACK")
-            watermark = {
-                "generation": max(watermark["generation"],
-                                  state["currentCredentialGeneration"]),
-                "epoch": max(watermark["epoch"],
-                             state["currentRevocationEpoch"]),
-            }
-        self._lifecycle_high_water[identity_key] = watermark
-
         status = state["lifecycleStatus"]
-        if status == "registered":
-            # R1 — severe-status latch: once this identity was ever
-            # observed "revoked" or "disabled", only a STRICTLY newer
-            # revocation epoch re-authorizes it. A generation-only
-            # increase is insufficient. Suspension never latches, so
-            # unchanged-epoch suspension recovery stays legitimate.
-            severe_epoch = self._lifecycle_severe.get(identity_key)
-            if severe_epoch is not None \
-                    and state["currentRevocationEpoch"] <= severe_epoch:
-                raise ParticipationRefused(
-                    "LIFECYCLE_REACTIVATION_NOT_CURRENT")
-        elif status == "revoked":
-            latched = self._lifecycle_severe.get(identity_key, 0)
-            self._lifecycle_severe[identity_key] = max(
-                latched, state["currentRevocationEpoch"])
-            raise ParticipationRefused("LIFECYCLE_STATUS_REVOKED")
-        elif status == "suspended":
-            raise ParticipationRefused("LIFECYCLE_STATUS_SUSPENDED")
-        elif status == "disabled":
-            # Emergency disablement — no silent path back to admission.
-            latched = self._lifecycle_severe.get(identity_key, 0)
-            self._lifecycle_severe[identity_key] = max(
-                latched, state["currentRevocationEpoch"])
-            raise ParticipationRefused("LIFECYCLE_STATUS_DISABLED")
+        if self.trusted_checkpoint is not None:
+            # P0D-A3A — durable checkpoint mode. The observation already
+            # survived rebuild/tamper, exact identity-match and the R1
+            # freshness window; the checkpoint atomically persists its
+            # anti-rollback state (rollbacks and same-epoch severe-
+            # status reactivations refuse INSIDE the atomic operation,
+            # with the same policy codes, before any admission result
+            # can be returned — and a newly observed severe status is
+            # durably recorded BEFORE this method raises its refusal).
+            # The in-memory trackers below are deliberately bypassed.
+            try:
+                self.trusted_checkpoint.apply_observation(
+                    state["agentRef"], state["tenantRef"],
+                    state["ownerRef"], status,
+                    state["currentCredentialGeneration"],
+                    state["currentRevocationEpoch"])
+            except CheckpointRefused as refused:
+                raise ParticipationRefused(refused.args[0]) from refused
+            # The checkpoint has committed; only the CURRENT-status
+            # refusals and the decision-currency checks below remain.
+            if status == "registered":
+                pass
+            elif status == "revoked":
+                raise ParticipationRefused("LIFECYCLE_STATUS_REVOKED")
+            elif status == "suspended":
+                raise ParticipationRefused("LIFECYCLE_STATUS_SUSPENDED")
+            elif status == "disabled":
+                raise ParticipationRefused("LIFECYCLE_STATUS_DISABLED")
+            else:
+                raise ParticipationRefused("LIFECYCLE_STATUS_UNKNOWN")
         else:
-            raise ParticipationRefused("LIFECYCLE_STATUS_UNKNOWN")
+            watermark = self._lifecycle_high_water.get(identity_key)
+            if watermark is None:
+                watermark = {"generation": state["currentCredentialGeneration"],
+                             "epoch": state["currentRevocationEpoch"]}
+            else:
+                # Rollback detection: only a source reporting a lower counter
+                # than ever seen before trips this. Equal-or-higher refreshes
+                # the watermark.
+                if state["currentCredentialGeneration"] < watermark["generation"] \
+                        or state["currentRevocationEpoch"] < watermark["epoch"]:
+                    raise ParticipationRefused("CREDENTIAL_STATE_ROLLBACK")
+                watermark = {
+                    "generation": max(watermark["generation"],
+                                      state["currentCredentialGeneration"]),
+                    "epoch": max(watermark["epoch"],
+                                 state["currentRevocationEpoch"]),
+                }
+            self._lifecycle_high_water[identity_key] = watermark
+
+            if status == "registered":
+                # R1 — severe-status latch: once this identity was ever
+                # observed "revoked" or "disabled", only a STRICTLY newer
+                # revocation epoch re-authorizes it. A generation-only
+                # increase is insufficient. Suspension never latches, so
+                # unchanged-epoch suspension recovery stays legitimate.
+                severe_epoch = self._lifecycle_severe.get(identity_key)
+                if severe_epoch is not None \
+                        and state["currentRevocationEpoch"] <= severe_epoch:
+                    raise ParticipationRefused(
+                        "LIFECYCLE_REACTIVATION_NOT_CURRENT")
+            elif status == "revoked":
+                latched = self._lifecycle_severe.get(identity_key, 0)
+                self._lifecycle_severe[identity_key] = max(
+                    latched, state["currentRevocationEpoch"])
+                raise ParticipationRefused("LIFECYCLE_STATUS_REVOKED")
+            elif status == "suspended":
+                raise ParticipationRefused("LIFECYCLE_STATUS_SUSPENDED")
+            elif status == "disabled":
+                # Emergency disablement — no silent path back to admission.
+                latched = self._lifecycle_severe.get(identity_key, 0)
+                self._lifecycle_severe[identity_key] = max(
+                    latched, state["currentRevocationEpoch"])
+                raise ParticipationRefused("LIFECYCLE_STATUS_DISABLED")
+            else:
+                raise ParticipationRefused("LIFECYCLE_STATUS_UNKNOWN")
 
         if decision["credentialGeneration"] \
                 < state["currentCredentialGeneration"]:
