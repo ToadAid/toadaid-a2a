@@ -1,0 +1,63 @@
+{
+  "authorityFlags": {
+    "agentRegistrationActive": false,
+    "deploymentAuthorized": false,
+    "executionAuthorized": false,
+    "publicDirectoryExposed": false,
+    "publicationAuthorized": false
+  },
+  "descriptionNote": "SYNTHETIC OFFLINE EXAMPLE - NOT A LIVE RESPONSE - NOT DEPLOYED",
+  "items": [
+    {
+      "claimed": false,
+      "correlationId": "corr-synthetic-alpha-001",
+      "eventId": "evt-synthetic-alpha-001",
+      "eventKind": "agent_identity_reference",
+      "evidenceClass": "infrastructure_observed",
+      "occurredAtUtc": "2026-11-03T00:00:00Z",
+      "payload": {
+        "agentRef": "agent-synthetic-one",
+        "registrationStatus": "registered"
+      },
+      "sourceIdentity": "agent-admission-portal"
+    },
+    {
+      "claimed": true,
+      "claimedRegistrationStatus": "registered",
+      "correlationId": "corr-synthetic-alpha-002",
+      "eventId": "evt-synthetic-alpha-002",
+      "eventKind": "agent_identity_reference",
+      "evidenceClass": "agent_reported",
+      "occurredAtUtc": "2026-11-03T00:00:01Z",
+      "payload": {
+        "agentRef": "agent-synthetic-two",
+        "registrationStatus": "unknown"
+      },
+      "sourceIdentity": "agent-synthetic-two"
+    },
+    {
+      "claimed": false,
+      "correlationId": "corr-synthetic-alpha-003",
+      "eventId": "evt-synthetic-alpha-003",
+      "eventKind": "human_refusal_receipt",
+      "evidenceClass": "human_authorized",
+      "occurredAtUtc": "2026-11-03T00:00:02Z",
+      "payload": {
+        "decisionChannel": "independent-off-chat-human-process",
+        "decisionId": "dec-synthetic-003",
+        "objectionCode": "PRIVACY",
+        "subjectKind": "agent_enrollment_publication",
+        "subjectRef": "agent-synthetic-two"
+      },
+      "sourceIdentity": "independent-off-chat-human-process"
+    }
+  ],
+  "kind": "toadaid-observatory-owner-dashboard-feed",
+  "ownerRef": "owner-alpha",
+  "schemaVersion": "0.1.0",
+  "stats": {
+    "totalForOwner": 3
+  },
+  "status": "SYNTHETIC_LOCAL_FOUNDATION_READ_ONLY",
+  "tenantRef": "tenant-alpha"
+}
