@@ -113,11 +113,12 @@ def build_registration_decision(
     _pin_identifier(agent_ref, "DECISION_AGENT_REF_NOT_ADMITTED")
     _pin_identifier(owner_ref, "DECISION_OWNER_REF_NOT_ADMITTED")
     _pin_identifier(tenant_ref, "DECISION_TENANT_REF_NOT_ADMITTED")
-    if registration_status not in REGISTRATION_STATUSES:
+    if not isinstance(registration_status, str) \
+            or registration_status not in REGISTRATION_STATUSES:
         raise ObservatoryRefusal("REGISTRATION_STATUS_NOT_ADMITTED")
     _pin_counter(credential_generation, "CREDENTIAL_GENERATION_NOT_ADMITTED")
     _pin_counter(revocation_epoch, "REVOCATION_EPOCH_NOT_ADMITTED")
-    if framework not in FRAMEWORK_KINDS:
+    if not isinstance(framework, str) or framework not in FRAMEWORK_KINDS:
         raise ObservatoryRefusal("FRAMEWORK_NOT_ADMITTED")
     if not isinstance(adapter_id, str) or not adapter_id \
             or len(adapter_id) > ADAPTER_ID_MAX_CHARS:
@@ -135,7 +136,9 @@ def build_registration_decision(
             or len(participation_scopes) > len(PARTICIPATION_SCOPES):
         raise ObservatoryRefusal("PARTICIPATION_SCOPES_NOT_ADMITTED")
     for scope in participation_scopes:
-        if scope not in PARTICIPATION_SCOPES:
+        # isinstance guard: an unhashable element (list/dict) must produce
+        # an explicit refusal, never an uncontrolled TypeError.
+        if not isinstance(scope, str) or scope not in PARTICIPATION_SCOPES:
             raise ObservatoryRefusal("PARTICIPATION_SCOPE_NOT_ADMITTED")
 
     return {

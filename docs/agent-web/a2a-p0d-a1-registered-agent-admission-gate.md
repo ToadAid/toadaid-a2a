@@ -81,23 +81,72 @@ A2A participation and message-routing core:
 - No changes to Portal, MCP, Diamond OS, wallets, Lore Land contracts, or
   production hosting.
 
+## R1 (review `5754596528`) — director-ordered hardening
+
+Four blockers repaired, all test-covered:
+
+- **R1-1 — sender SEND enforcement.** `route()` ALWAYS requires
+  `a2a-message-send` from the sender's verified decision, regardless of
+  the request's declared scope; a route request declaring anything else
+  is refused as `SENDER_SCOPE_MISMATCH`, and a send-less sender is
+  refused as `PARTICIPATION_SCOPE_NOT_AUTHORIZED`. A receive-only agent
+  can never initiate delivery.
+- **R1-2 — recipient-bound replay identity.** The journal key is now a
+  delivery digest over (request digest + canonical verified recipient
+  identity). The same message ID aimed at a DIFFERENT registered
+  recipient is a conflicting replay (`REPLAY_MESSAGE_ID_CONFLICT`), never
+  an identical one; the journal field is `deliveryDigest` (rename honest).
+  Covered across same-tenant distinct recipients and across
+  export/restore.
+- **R1-3 — true UTC conversion.** Aware clocks are converted with
+  `astimezone(timezone.utc)` — never offset-stripped; non-UTC offsets can
+  no longer revive expired evidence. Positive and negative tests with
+  +02:00, -06:00, and +05:45 offsets straddle expiry boundaries.
+- **R1-4 — caller authentication seam.** Registration is NOT
+  authentication. Every `authorize()`/`route()` call now requires an
+  opaque `CallerCredential` bound by an injected trusted caller-identity
+  verifier to a verified `{agentRef, tenantRef, ownerRef}` principal; the
+  request context must EQUAL the verified binding
+  (`CALLER_IDENTITY_MISMATCH` otherwise). A missing verifier, a None or
+  string or dict credential, a foreign credential, or a tampered binding
+  all refuse. No production authentication, Portal login, or live
+  connection: the synthetic verifier is explicitly SYNTHETIC OFFLINE
+  ONLY.
+
+Additional hardening in the same pass: recipient tenant/owner identifiers
+are pinned before any adapter call
+(`RECIPIENT_{TENANT,OWNER}_REF_NOT_ADMITTED`); malformed collection-valued
+enum inputs (list/dict where a string enum is required — status,
+framework, scopes, declared scope, message type) now produce explicit
+refusals instead of uncontrolled TypeErrors (guard added in
+`admission/model.py` and the request validators); and the journal is
+documented as IN-MEMORY, non-durable state whose restored hash chain is
+tamper-EVIDENCE only — a hash chain does not authenticate externally
+supplied history.
+
 ## Verification (local, offline)
 
-`python3 -m unittest discover -s tests -v` — 297 tests OK
-(236 baseline + 61 new adversarial cases in
+`python3 -m unittest discover -s tests -v` — 316 tests OK
+(236 baseline + 80 in
 `tests/test_a2a_p0d_admission_gate.py`), covering: model binding and
 kwarg smuggling, calendar-real timestamps, the full construction-refusal
-matrix, fail-closed default gate and clock handling, adapter tamper and
-malformed record refusals, every registration status, evidence expiry
-including the inclusive boundary, claim forgery (Agent Card, execution,
-payment, wallet, deploy, registration-change, directory claims), message
-body claims, owner/tenant context mismatch, participation scoping on both
-sides of a delivery, request/recipient shape refusals, self-delivery,
-replay idempotence and conflict, journal capacity, export/restore restart,
-broken/tampered chain refusals, duplicated messageId in a re-signed
-chain, metadata-only journal contents, cross-tenant refusal (reachable,
-and it writes no journal entry), receipt binding of both agents, the
-full two-agent rehearsal A→B and B→A with descriptive framework labels,
+matrix plus malformed-collection enums, fail-closed default gate, all
+three trust seams (caller verifier / registration adapter / clock) each
+refusing independently when missing, caller-identity enforcement
+(R1-4), sender send enforcement (R1-1), recipient-bound replay across
+recipients and export/restore (R1-2), aware-clock UTC conversion
+boundary pairs with nonzero offsets (R1-3), adapter tamper and malformed
+records, every registration status, evidence expiry including the
+inclusive boundary, claim forgery (Agent Card, execution, payment,
+wallet, deploy, registration-change, directory claims), inert message
+body claims, owner/tenant context mismatch, participation scoping on
+both sides of a delivery, request/recipient shape refusals including
+pre-adapter recipient pinning, self-delivery, replay idempotence and
+conflict, journal capacity, export/restore restart, broken/tampered
+chain refusals, duplicated messageId in a re-signed chain,
+metadata-only journal contents, cross-tenant refusal (reachable, and it
+writes no journal entry), receipt binding of both agents, the full
+two-agent rehearsal A→B and B→A with descriptive framework labels,
 revocation mid-conversation, the preserved invariant verbatim, and
 constants.
 
@@ -115,9 +164,12 @@ constants.
 
 - Base commit: `cc7eec4ee0f84f9d501fe0d891d2f8f8f363b9a9` (origin/main
   after PR #14 squash-merge).
-- Worktree: branch `cut-p0d-a1-registered-agent-admission-20261103`.
-- Deliverable state: committed NOTHING yet — stopped before commit,
-  push, PR, merge, or deployment per mission order.
+- PR #15 cut commit: `3ef28b6f2a03bd3c65a96a66c74510d75bc8ece0`
+  (branch `cut-p0d-a1-registered-agent-admission-20261103`).
+- R1 state: the four review-blocking repairs above are implemented and
+  locally verified as UNCOMMITTED changes on top of the PR #15 cut
+  commit; stopped before commit, push, PR update, or merge per the
+  R1 mission order.
 
 ONE CUT · ONE PROOF · ONE DIRECTOR RULING.
 HUMANS AUTHORIZE · AGENTS PROVE · AUTHORITY IS NEVER ASSUMED.
