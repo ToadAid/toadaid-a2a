@@ -1,6 +1,6 @@
 # Agent Observatory data foundation v0 (AO-P0A)
 
-**Cut:** CUT-AO-P0A-20261103
+**Cut:** CUT-AO-P0A-20261103 (+ R1 security repairs)
 **Status:** LOCAL SYNTHETIC FOUNDATION — **NOT DEPLOYED**
 **Repository:** `ToadAid/toadaid-a2a` (base `d53275a638a506e3242e7e1c6c8c970c6cdbe7c4`)
 
@@ -16,15 +16,30 @@ the publishing plan, or the lore rights/handoff cuts.
   UTC), `evidenceClass`, `sourceIdentity`, `tenantRef`, `ownerRef`,
   `privacyClassification`, `visibilityClass`, a fixed **all-false**
   `authorityFlags` block, and an exact-whitelist `payload`.
-- `observatory/feed.py` — bounded append-only recorder (trusted components
-  only; idempotent replay; conflicting duplicates and capacity overflow refuse)
-  and a strictly read-only **owner-scoped** dashboard reader.
-- `observatory/contract.py` — the machine-readable interface contract and a
-  synthetic example response for Codex's frontend work.
+- `observatory/feed.py` — bounded append-only recorder with a **trusted
+  ingestion seam** (producer provenance is authenticated against an opaque
+  producer credential bound to component, evidence classes, tenant/owner
+  scope, relayable agents and human-receipt relay; component strings typed by
+  callers are never credentials — R1) and a strictly read-only
+  **owner-scoped** dashboard reader serving detached, deep-copied snapshots
+  (R1: retained references cannot rewrite audited history).
+- `observatory/contract.py` — the machine-readable interface contract (read
+  authorization seam **and** trusted producer ingestion seam) and a synthetic
+  example response for Codex's frontend work; item order is documented
+  truthfully as recorder insertion order (R1).
 - `contracts/agent-web/observatory-feed.v0.schema.json` — JSON Schema
-  (draft 2020-12) for the feed response. The `$id` is NOT a live hosted URL.
-- `contracts/examples/synthetic-observatory-feed.v0.json` — synthetic example.
-- `tests/test_observatory_foundation.py` — unit + adversarial tests.
+  (draft 2020-12) for the feed response, aligned exactly with the generated
+  feed and stored example (R1: five-flag `authorityFlags`, no unadvertised
+  extra keys). The `$id` is NOT a live hosted URL.
+- `contracts/examples/synthetic-observatory-feed.v0.json` — synthetic example,
+  schema-conformant and byte-for-field identical to the generated example (R1).
+- `observatory/model.py` additionally pins per-kind payload **leaf types**
+  (identifier-only participants, typed int counters, bounded typed refs,
+  calendar-real ISO-8601 UTC timestamps — R1).
+- `tests/test_observatory_foundation.py` — unit + adversarial tests, including
+  R1 regressions: forged component strings, binding scope breaches, retained-
+  reference mutation attempts, schema-conformance validation, and typed/negative
+  payload controls.
 
 ## Evidence classes (per record, always explicit)
 

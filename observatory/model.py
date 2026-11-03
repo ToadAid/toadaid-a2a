@@ -17,6 +17,7 @@ Boundaries (none of which this module reopens):
     never rendered online, idle or verified anywhere downstream.
 """
 
+import datetime
 import json
 import re
 
@@ -179,6 +180,72 @@ _ISO_UTC_RE = re.compile(
 )
 
 
+def _real_utc_datetime(stamp):
+    """Calendar-validate an already regex-shaped ISO-UTC stamp.
+
+    Regex-shaped but impossible dates (2026-02-30, hour 25) are refused:
+    observability metadata must be real UTC timestamps, not free text.
+    """
+    body = stamp[:-1]  # trailing Z was already regex-verified
+    if "." in body:
+        body, fraction = body.split(".", 1)
+        if not (fraction and fraction.isdigit()):
+            return None
+    try:
+        return datetime.datetime.strptime(body, "%Y-%m-%dT%H:%M:%S")
+    except ValueError:
+        return None
+
+
+def _pin_identifier(value, refusal):
+    """Typed bounded reference: a lowercase repo identifier or nothing."""
+    if not isinstance(value, str) or not IDENTIFIER_RE.match(value):
+        raise ObservatoryRefusal(refusal)
+
+
+def _pin_counter(value, refusal):
+    """Typed counter: a nonnegative int, never bool/str/float."""
+    if isinstance(value, bool) or not isinstance(value, int) \
+            or value < 0 or value > MAX_INT_VALUE:
+        raise ObservatoryRefusal(refusal)
+
+
+def _pin_payload_types(event_kind, payload):
+    """Typed, identifier-only, metadata-only per-kind payload leaves.
+
+    Nested structures, wrong scalar types (str counters, bool counters,
+    floats), and free-text raw content in a metadata slot are refused with
+    specific typed codes. Runs before the generic bounds walk.
+    """
+    if event_kind in ("agent_identity_reference", "agent_activity_event",
+                      "lifecycle_security_event"):
+        _pin_identifier(payload["agentRef"], "AGENT_REF_NOT_ADMITTED")
+    if event_kind == "a2a_conversation_metadata":
+        _pin_identifier(payload["conversationId"], "CONVERSATION_ID_NOT_ADMITTED")
+        _pin_counter(payload["turnCount"], "TURN_COUNT_NOT_ADMITTED")
+        participants = payload["participants"]
+        if not isinstance(participants, list) \
+                or len(participants) > MAX_LIST_ITEMS or not participants:
+            raise ObservatoryRefusal("PARTICIPANTS_NOT_ADMITTED")
+        for participant in participants:
+            _pin_identifier(participant, "PARTICIPANTS_NOT_ADMITTED")
+    if event_kind == "mcp_tool_request_metadata":
+        if not isinstance(payload["toolName"], str) \
+                or not _TOOL_NAME_RE.match(payload["toolName"]):
+            raise ObservatoryRefusal("TOOL_NAME_NOT_ADMITTED")
+        grant = payload["authorizationGrantRef"]
+        if grant is not None and (not isinstance(grant, str)
+                                  or not IDENTIFIER_RE.match(grant)):
+            raise ObservatoryRefusal("GRANT_REF_NOT_ADMITTED")
+    if event_kind in ("human_authorization_receipt", "human_refusal_receipt"):
+        _pin_identifier(payload["decisionId"], "DECISION_ID_NOT_ADMITTED")
+        _pin_identifier(payload["subjectRef"], "SUBJECT_REF_NOT_ADMITTED")
+    if event_kind == "lifecycle_security_event":
+        _pin_counter(payload["generation"], "LIFECYCLE_COUNTER_TYPE_NOT_ADMITTED")
+        _pin_counter(payload["revocationEpoch"],
+                     "LIFECYCLE_COUNTER_TYPE_NOT_ADMITTED")
+
+
 class ObservatoryRefusal(ValueError):
     """Deny-first refusal of an out-of-bounds observability record."""
 
@@ -240,14 +307,18 @@ def build_event(
     if not owner_ref or not isinstance(owner_ref, str):
         raise ObservatoryRefusal("OWNER_REF_REQUIRED_FROM_TRUSTED_SERVER")
     _check(tenant_ref, "tenantRef")
-    if not IDENTIFIER_RE.match(event_id or ""):
+    if not isinstance(event_id, str) or not IDENTIFIER_RE.match(event_id):
         raise ObservatoryRefusal("EVENT_ID_NOT_ADMITTED")
-    if not IDENTIFIER_RE.match(correlation_id or ""):
+    if not isinstance(correlation_id, str) or not IDENTIFIER_RE.match(correlation_id):
         raise ObservatoryRefusal("CORRELATION_ID_NOT_ADMITTED")
-    if not IDENTIFIER_RE.match(owner_ref):
+    if not isinstance(owner_ref, str) or not IDENTIFIER_RE.match(owner_ref):
         raise ObservatoryRefusal("OWNER_REF_NOT_ADMITTED")
-    if not _ISO_UTC_RE.match(occurred_at_utc or ""):
+    if not isinstance(occurred_at_utc, str) or not _ISO_UTC_RE.match(occurred_at_utc):
         raise ObservatoryRefusal("TIMESTAMP_NOT_ISO_UTC")
+    if not _real_utc_datetime(occurred_at_utc):
+        raise ObservatoryRefusal("TIMESTAMP_NOT_A_REAL_UTC_DATETIME")
+    if not isinstance(source_identity, str) or not source_identity:
+        raise ObservatoryRefusal("SOURCE_IDENTITY_NOT_ADMITTED")
     if not isinstance(payload, dict) or not payload:
         raise ObservatoryRefusal("PAYLOAD_SHAPE_INVALID")
     if set(payload) != KIND_KEYS[event_kind]:
@@ -265,12 +336,13 @@ def build_event(
             and source_identity != payload.get("agentRef"):
         raise ObservatoryRefusal("AGENT_REPORTED_SOURCE_MUST_BE_THE_AGENT")
 
+    # Strict leaf types (R1 finding 4): per-kind metadata is typed before
+    # the bounds walk, so wrong scalar types / nested raw content get the
+    # specific typed refusal instead of a generic bounds code.
+    _pin_payload_types(event_kind, payload)
     checked_payload = _check(payload, "payload")
-    for key in ("generation", "revocationEpoch"):
-        if event_kind == "lifecycle_security_event" and key not in checked_payload:
-            raise ObservatoryRefusal("LIFECYCLE_COUNTERS_REQUIRED")
 
-    # Value-domain pinning for bounded payloads.
+    # Value-domain pinning for bounded payloads (checked values).
     if event_kind == "agent_identity_reference":
         if checked_payload["registrationStatus"] not in REGISTRATION_STATUSES:
             raise ObservatoryRefusal("REGISTRATION_STATUS_NOT_ADMITTED")
@@ -280,11 +352,6 @@ def build_event(
     if event_kind == "mcp_tool_request_metadata":
         if checked_payload["requestState"] not in OBSERVED_REQUEST_STATES:
             raise ObservatoryRefusal("REQUEST_STATE_NOT_ADMITTED")
-        if not _TOOL_NAME_RE.match(checked_payload["toolName"]):
-            raise ObservatoryRefusal("TOOL_NAME_NOT_ADMITTED")
-        grant = checked_payload["authorizationGrantRef"]
-        if grant is not None and not IDENTIFIER_RE.match(grant):
-            raise ObservatoryRefusal("GRANT_REF_NOT_ADMITTED")
     if event_kind in ("human_authorization_receipt", "human_refusal_receipt"):
         if checked_payload["subjectKind"] not in SUBJECT_KINDS:
             raise ObservatoryRefusal("SUBJECT_KIND_NOT_ADMITTED")
@@ -293,6 +360,9 @@ def build_event(
         if event_kind == "human_refusal_receipt" \
                 and checked_payload["objectionCode"] not in OBJECTION_CODES:
             raise ObservatoryRefusal("OBJECTION_CODE_NOT_ADMITTED")
+    if event_kind == "lifecycle_security_event":
+        if checked_payload["lifecycleKind"] not in LIFECYCLE_KINDS:
+            raise ObservatoryRefusal("LIFECYCLE_KIND_NOT_ADMITTED")
 
     privacy_floor = {"public": {"public"},
                      "community": {"community", "public"},

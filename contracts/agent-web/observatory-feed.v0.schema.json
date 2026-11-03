@@ -32,12 +32,13 @@
     "authorityFlags": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["executionAuthorized", "publicationAuthorized", "deploymentAuthorized", "agentRegistrationActive"],
+      "required": ["executionAuthorized", "publicationAuthorized", "deploymentAuthorized", "agentRegistrationActive", "publicDirectoryExposed"],
       "properties": {
         "executionAuthorized": {"const": false},
         "publicationAuthorized": {"const": false},
         "deploymentAuthorized": {"const": false},
-        "agentRegistrationActive": {"const": false}
+        "agentRegistrationActive": {"const": false},
+        "publicDirectoryExposed": {"const": false}
       }
     },
     "observedItem": {

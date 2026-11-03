@@ -1,7 +1,8 @@
 """CUT-AO-P0A-20261103 — read-only, owner-scoped Observatory feed.
 
-Bounded feed recorder (trusted-component write seam, private journal style)
-and a strictly read-only owner-dashboard reader.
+Bounded feed recorder with a TRUSTED INGESTION seam (producer provenance is
+authenticated, never taken from caller-provided component strings) and a
+strictly read-only owner-dashboard reader serving only detached snapshots.
 
 Privacy model (Director ruling AO-P0A):
   * ``agent.toadaid.org/dashboard/`` is a PRIVATE owner dashboard: owners may
@@ -11,6 +12,15 @@ Privacy model (Director ruling AO-P0A):
     default trust adapter refuses everything, and only an injected trusted
     adapter can authorize a reader. This is a seam for a future real
     authentication system — none is invented or bypassed here.
+  * WRITES FAIL CLOSED too: a producer must present an opaque credential that
+    an injected trusted authenticator maps to a binding (allowed evidence
+    classes, component, tenant/owner scope, bound agents, human-receipt
+    relay). The default recorder has NO authenticator and refuses every
+    write. Component strings like "agent-admission-portal" typed by a caller
+    are not credentials and never authenticate anything.
+  * Recorded events are stored as detached rebuild snapshots and every read
+    returns deep copies: no retained reference — neither the caller's input
+    nor a served feed item — can rewrite audited history or upgrade evidence.
   * There is NO public projection in this cut. The public agent directory is
     a separate future cut; requesting one here is refused.
   * Unknown or unavailable agent status can never surface as verified,
@@ -19,11 +29,14 @@ Privacy model (Director ruling AO-P0A):
     "claimedRegistrationStatus".
 """
 
+import copy
 import re
 
 from .model import (
+    EVIDENCE_CLASSES,
     IDENTIFIER_RE,
     ObservatoryRefusal,
+    TRUSTED_SOURCES,
     build_event,
     canonical_json,
 )
@@ -37,6 +50,9 @@ __all__ = [
     "PUBLIC_DIRECTORY_STATUS",
     "FeedRecorder",
     "OwnerScopeTrustRefused",
+    "ProducerToken",
+    "ProducerTrustRefused",
+    "synthetic_offline_authenticator",
     "owner_dashboard_feed",
     "assert_public_directory_is_separate_cut",
 ]
@@ -64,51 +80,179 @@ class OwnerScopeTrustRefused(PermissionError):
     """A read with no trusted authorization adapter authorizing it."""
 
 
+class ProducerTrustRefused(PermissionError):
+    """A record attempt without trusted producer authentication."""
+
+
+class ProducerToken:
+    """Opaque ingestion credential (identity equality, not a typed string).
+
+    Provenance binds to the token INSTANCE issued by a trusted provisioning
+    step, mapped to a binding by an injected authenticator. A caller who can
+    type "agent-admission-portal" can forge nothing.
+    """
+
+    __slots__ = ("_label",)
+
+    def __init__(self, label="producer"):
+        self._label = str(label)
+
+    def __repr__(self):
+        return f"ProducerToken({self._label!r})"
+
+
+def synthetic_offline_authenticator(bindings):
+    """SYNTHETIC OFFLINE ONLY — NOT A REAL AUTHENTICATION SYSTEM.
+
+    Maps issued ProducerToken instances to producer binding dicts for local
+    tests and synthetic examples. The fail-closed production stance stays
+    intact: a real deployment injects a real authenticator instead.
+    """
+    if not isinstance(bindings, dict) or not bindings:
+        raise ObservatoryRefusal("PRODUCER_BINDINGS_SHAPE_INVALID")
+    try:
+        frozen = {token: binding for token, binding in bindings.items()}
+    except TypeError:
+        raise ObservatoryRefusal("PRODUCER_BINDINGS_SHAPE_INVALID")
+    return lambda token: frozen.get(token)
+
+
+_BINDING_KEYS = frozenset({
+    "producerComponent", "evidenceClasses", "humanReceipts",
+    "tenantRefs", "ownerRefs", "agentRefs",
+})
+
+_REFUSABLE_SEQUENCES = (frozenset, set, list, tuple)
+
+
+def _validate_binding(binding):
+    """Shape- and domain-check a producer binding; return a frozen copy.
+
+    An authenticated producer is bound to its component, allowed evidence
+    classes, tenant/owner scope, the agents whose agent-reported claims it
+    may relay, and whether it may relay off-chat human decisions.
+    """
+    if not isinstance(binding, dict) or set(binding) != _BINDING_KEYS:
+        raise ObservatoryRefusal("PRODUCER_BINDING_NOT_ADMITTED")
+    component = binding["producerComponent"]
+    if not isinstance(component, str) or component not in TRUSTED_SOURCES:
+        raise ObservatoryRefusal("PRODUCER_BINDING_NOT_ADMITTED")
+    classes = binding["evidenceClasses"]
+    if not isinstance(classes, _REFUSABLE_SEQUENCES) or not classes \
+            or not set(classes) <= EVIDENCE_CLASSES:
+        raise ObservatoryRefusal("PRODUCER_BINDING_NOT_ADMITTED")
+    if not isinstance(binding["humanReceipts"], bool):
+        raise ObservatoryRefusal("PRODUCER_BINDING_NOT_ADMITTED")
+
+    def _pinned_refs(refs):
+        if not isinstance(refs, _REFUSABLE_SEQUENCES):
+            raise ObservatoryRefusal("PRODUCER_BINDING_NOT_ADMITTED")
+        for ref in refs:
+            if not isinstance(ref, str) or not IDENTIFIER_RE.match(ref):
+                raise ObservatoryRefusal("PRODUCER_BINDING_NOT_ADMITTED")
+        return frozenset(refs)
+
+    agents = binding["agentRefs"]
+    return {
+        "producerComponent": component,
+        "evidenceClasses": frozenset(classes),
+        "humanReceipts": binding["humanReceipts"],
+        "tenantRefs": _pinned_refs(binding["tenantRefs"]),
+        "ownerRefs": _pinned_refs(binding["ownerRefs"]),
+        "agentRefs": None if agents is None else _pinned_refs(agents),
+    }
+
+
 def assert_public_directory_is_separate_cut():
     """Refuse any public/procedural directory access in THIS cut."""
     raise ObservatoryRefusal("PUBLIC_DIRECTORY_SEPARATE_FUTURE_CUT")
 
 
 class FeedRecorder:
-    """Append-only, bounded, trusted-component feed journal.
+    """Append-only, bounded, authenticated producer journal.
 
-    Journal-before-delivery style: idempotent records return their prior
-    entry; conflicting duplicates and out-of-bounds state fail closed. No
-    client capability can write here.
+    Ingestion is fail-closed: the constructor's trusted authenticator is
+    None by default, so an unconfigured recorder accepts NOTHING. Accepted
+    records are stored as detached rebuild snapshots and every read returns
+    deep copies, so retained references cannot rewrite history.
     """
 
-    def __init__(self, capacity=MAX_EVENTS, trusted_authorization_adapter=None):
+    def __init__(self, capacity=MAX_EVENTS, trusted_authorization_adapter=None,
+                 trusted_producer_authenticator=None):
         if capacity < 1 or capacity > MAX_EVENTS:
             raise ObservatoryRefusal("FEED_CAPACITY_OUT_OF_BOUNDS")
         self.capacity = capacity
-        # Fail-closed seam: a future real authentication system is injected
-        # here via a trusted adapter callable. The default (None) authorizes
-        # NOTHING — no read without an explicitly trusted adapter.
+        # Read-side fail-closed seam: a future real authentication system is
+        # injected here via a trusted adapter callable. The default (None)
+        # authorizes NOTHING — no read without an explicitly trusted adapter.
         self.trusted_authorization_adapter = trusted_authorization_adapter
+        # Write-side fail-closed seam: a future real producer authenticator
+        # is injected here. The default (None) accepts NOTHING — no write
+        # without an explicitly trusted authenticator.
+        self.trusted_producer_authenticator = trusted_producer_authenticator
+        # Detached snapshots only: the caller's dict is never retained.
         self._events = []
         self._canonical_by_event_id = {}
 
-    def record(self, validated_event, component):
-        if component not in {"lifecycle-journal", "agent-admission-portal"}:
-            raise ObservatoryRefusal("RECORDER_COMPONENT_NOT_TRUSTED")
-        if canonical_json(validated_event) != \
-                canonical_json(build_event(**_record_to_builder(validated_event))):
+    def record(self, validated_event, producer_credential):
+        """Authenticate a producer, re-validate, then store a detached copy.
+
+        Provenance is verified against the authenticator's binding, not the
+        caller's word: the binding fixes the producer's component, the
+        evidence classes it may attest, its tenant/owner scope, the agents
+        whose agent-reported claims it may relay, and whether it may relay
+        off-chat human decisions. Component strings typed by callers are not
+        credentials.
+        """
+        if self.trusted_producer_authenticator is None:
+            raise ProducerTrustRefused("PRODUCER_AUTHENTICATION_REQUIRED")
+        try:
+            raw_binding = self.trusted_producer_authenticator(producer_credential)
+        except (TypeError, LookupError):
+            raw_binding = None
+        if not isinstance(raw_binding, dict):
+            raise ProducerTrustRefused("PRODUCER_AUTHENTICATION_REFUSED")
+        binding = _validate_binding(raw_binding)
+
+        rebuilt = build_event(**_record_to_builder(validated_event))
+        if canonical_json(validated_event) != canonical_json(rebuilt):
             raise ObservatoryRefusal("EVENT_RECORD_TAMPERED")
-        key = validated_event["eventId"]
+
+        evidence = rebuilt["evidenceClass"]
+        if evidence not in binding["evidenceClasses"]:
+            raise ProducerTrustRefused("PRODUCER_EVIDENCE_NOT_BOUND")
+        if evidence == "infrastructure_observed" \
+                and rebuilt["sourceIdentity"] != binding["producerComponent"]:
+            raise ProducerTrustRefused("PRODUCER_SOURCE_MISMATCH")
+        if evidence == "human_authorized" and not binding["humanReceipts"]:
+            raise ProducerTrustRefused("PRODUCER_HUMAN_CHANNEL_NOT_BOUND")
+        if evidence == "agent_reported":
+            agents = binding["agentRefs"]
+            agent = rebuilt["payload"].get("agentRef")
+            if agents is None or agent not in agents:
+                raise ProducerTrustRefused("PRODUCER_AGENT_NOT_BOUND")
+        if rebuilt["tenantRef"] not in binding["tenantRefs"]:
+            raise ProducerTrustRefused("PRODUCER_TENANT_NOT_BOUND")
+        if rebuilt["ownerRef"] not in binding["ownerRefs"]:
+            raise ProducerTrustRefused("PRODUCER_OWNER_NOT_BOUND")
+
+        key = rebuilt["eventId"]
+        digest = canonical_json(rebuilt)
         seen = self._canonical_by_event_id.get(key)
-        digest = canonical_json(validated_event)
         if seen is not None:
             if seen == digest:
                 return {"recorded": "idempotent", "eventId": key}
             raise ObservatoryRefusal("DUPLICATE_EVENT_ID_CONFLICT")
         if len(self._events) >= self.capacity:
             raise ObservatoryRefusal("FEED_CAPACITY_EXCEEDED")
-        self._events.append(validated_event)
+        # `rebuilt` shares no mutable container with the caller's input.
+        self._events.append(rebuilt)
         self._canonical_by_event_id[key] = digest
         return {"recorded": True, "eventId": key}
 
     def events(self):
-        return list(self._events)
+        """Detached deep-copied journal view; mutation here is local only."""
+        return copy.deepcopy(self._events)
 
 
 def _record_to_builder(validated):
@@ -196,7 +340,10 @@ def owner_dashboard_feed(recorder, owner_scope, filters=None, pagination=None):
 
 
 def _project(record):
-    payload = dict(record["payload"])
+    # Detached projection: the served item shares no mutable container with
+    # the stored record, so a client mutating a feed item cannot rewrite the
+    # audited journal.
+    payload = copy.deepcopy(record["payload"])
     extra = {}
     if record["eventKind"] == "agent_identity_reference":
         if record["evidenceClass"] != "infrastructure_observed":

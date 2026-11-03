@@ -16,8 +16,9 @@ Contract truthfulness rules reflected here:
     human_authorized / unverified) are part of the contract; agent-reported
     items always arrive plainly marked ``claimed: true``.
   * No production authentication system is invented or bypassed here: the
-    contract carries an authorization SEAM (trusted adapter), not an
-    implementation. All authority flags stay false.
+    contract carries an authorization SEAM (trusted adapter) and a trusted
+    producer ingestion seam, not an implementation. All authority flags stay
+    false.
 """
 
 from . import feed as _feed
@@ -61,6 +62,16 @@ def interface_contract():
                 "client-authorization-assertions",
             ],
         },
+        "ingestionSeam": {
+            "mechanism": "trusted-producer-credential",
+            "componentStringsAreCredentials": False,
+            "defaultPolicy": "refuse",
+            "failClosed": True,
+            "bindingFields": [
+                "producerComponent", "evidenceClasses", "humanReceipts",
+                "tenantRefs", "ownerRefs", "agentRefs",
+            ],
+        },
         "feedContract": {
             "kind": _feed.DASHBOARD_KIND,
             "status": _feed.DASHBOARD_STATUS,
@@ -72,7 +83,8 @@ def interface_contract():
             "pageLimits": list(_feed.ALLOWED_PAGE_LIMITS),
             "pageTokenPattern": "^cur:[0-9]{1,9}$",
             "maxEvents": _feed.MAX_EVENTS,
-            "stableItemOrder": ["occurredAtUtc", "eventId"],
+            "stableItemOrder": "recorderInsertionOrder",
+            "pageOffsetsStableUnderGrowth": True,
             "claimedMarker": "claimed",
             "unknownStatusPolicy":
                 "non-confirmed status projects as 'unknown' only; the "
@@ -101,7 +113,31 @@ def synthetic_dashboard_example():
     """Synthetic example response for the frontend contract (offline)."""
     adapter = (lambda scope: scope["tenantRef"] == "tenant-alpha"
                and scope["ownerRef"] == "owner-alpha")
-    recorder = _feed.FeedRecorder(trusted_authorization_adapter=adapter)
+    # SYNTHETIC OFFLINE producers only — not a real authentication system.
+    portal_token = _feed.ProducerToken("synthetic-local-portal")
+    journal_token = _feed.ProducerToken("synthetic-local-journal")
+    bindings = {
+        portal_token: {
+            "producerComponent": "agent-admission-portal",
+            "evidenceClasses": tuple(sorted(
+                {"infrastructure_observed", "agent_reported", "unverified"})),
+            "humanReceipts": False,
+            "tenantRefs": ("tenant-alpha",), "ownerRefs": ("owner-alpha",),
+            "agentRefs": ("agent-synthetic-two",),
+        },
+        journal_token: {
+            "producerComponent": "lifecycle-journal",
+            "evidenceClasses": tuple(sorted(
+                {"infrastructure_observed", "unverified", "human_authorized"})),
+            "humanReceipts": True,
+            "tenantRefs": ("tenant-alpha",), "ownerRefs": ("owner-alpha",),
+            "agentRefs": None,
+        },
+    }
+    recorder = _feed.FeedRecorder(
+        trusted_authorization_adapter=adapter,
+        trusted_producer_authenticator=_feed.synthetic_offline_authenticator(
+            bindings))
     from .model import AUTHORITY_FLAGS  # noqa: F401  (shape documentation)
     event = _model.build_event(
         event_kind="agent_identity_reference",
@@ -117,7 +153,7 @@ def synthetic_dashboard_example():
         payload={"agentRef": "agent-synthetic-one",
                  "registrationStatus": "registered"},
     )
-    recorder.record(event, "agent-admission-portal")
+    recorder.record(event, portal_token)
     claimed = _model.build_event(
         event_kind="agent_identity_reference",
         event_id="evt-synthetic-alpha-002",
@@ -132,7 +168,9 @@ def synthetic_dashboard_example():
         payload={"agentRef": "agent-synthetic-two",
                  "registrationStatus": "registered"},
     )
-    recorder.record(claimed, "agent-admission-portal")
+    # The portal producer relays this agent's claim; the binding is what
+    # ties the claim to a specific bound agent.
+    recorder.record(claimed, portal_token)
     refusal = _model.build_event(
         event_kind="human_refusal_receipt",
         event_id="evt-synthetic-alpha-003",
@@ -150,7 +188,9 @@ def synthetic_dashboard_example():
                  "subjectRef": "agent-synthetic-two",
                  "objectionCode": "PRIVACY"},
     )
-    recorder.record(refusal, "lifecycle-journal")
+    # The journal relays the off-chat human decision; only a producer with
+    # humanReceipts bound can do that at all.
+    recorder.record(refusal, journal_token)
     return _feed.owner_dashboard_feed(
         recorder,
         {"tenantRef": "tenant-alpha", "ownerRef": "owner-alpha",
