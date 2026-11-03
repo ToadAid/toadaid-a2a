@@ -108,3 +108,7 @@ The [human-review handoff contract](docs/agent-web/p0-web-03b2a-human-review-han
 - Offline CLI: `python3 -m agent_web.lore_human_handoff --packet PRIVATE_PACKET --inventory PRIVATE_INVENTORY --docket PRIVATE_DOCKET`.
 
 **NEVER A RIGHTS GRANT.** Even structurally complete claims cannot establish human identity, prove lawful reuse, approve lore export, or deploy a service. P0-WEB-03B2's *real* independent human decision remains pending outside this repo; official A2A TCK remains UNRUN.
+
+## Want to build with us?
+
+ToadAid A2A welcomes constructive contributions from independent builders interested in A2A interoperability and verifiable, human-governed agent collaboration — see [CONTRIBUTING.md](CONTRIBUTING.md) for how to clone, run the tests, and propose changes. Licensing: MIT (the ToadAid Director approved MIT on 2026-11-03 for ToadAid's original repository code and documentation; third-party materials retain their own rights — original Tobyworld lore is not relicensed. See [LICENSE](LICENSE) and the [license rights assessment](docs/agent-web/community-license-rights-assessment-v0.md)).
