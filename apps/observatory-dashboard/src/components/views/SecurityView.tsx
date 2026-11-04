@@ -95,9 +95,9 @@ export const SecurityView: React.FC<SecurityViewProps> = ({ authorityFlags }) =>
             </div>
             <p className="text-[var(--color-text-muted)] leading-relaxed">
               The runtime authority-flag data did not conform to the strict five-flag,
-              strictly-boolean-false schema. Rendering "ENFORCED FALSE" for invalid data would be a
-              false safety claim, so NO flags are displayed. Treat this as an invalid-state warning,
-              not an enforcement result.
+              strictly-boolean-false schema. Confirming enforcement on invalid data would be a false
+              safety claim, so NO flags are displayed. Treat this as an invalid-state warning, not an
+              enforcement result.
             </p>
             <ul className="list-disc pl-5 font-mono text-[var(--color-text-dim)] space-y-0.5">
               {flagValidation.problems.map((problem, index) => (

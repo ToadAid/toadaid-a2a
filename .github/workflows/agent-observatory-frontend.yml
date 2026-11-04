@@ -1,0 +1,43 @@
+name: Agent Observatory Frontend
+
+# R4-B: narrow, path-filtered frontend qualification for the observatory
+# dashboard. Qualifies the actual reviewed commit (pull_request — never
+# pull_request_target) with the committed lockfile. Read-only: no secrets are
+# supplied to the frontend build, nothing is published, nothing is deployed.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/observatory-dashboard/**'
+      - '.github/workflows/agent-observatory-frontend.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/observatory-dashboard/**'
+      - '.github/workflows/agent-observatory-frontend.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  frontend-privacy-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out reviewed commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Set up Node.js from committed configuration
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 22
+      - name: Install dependencies from the committed lockfile
+        working-directory: apps/observatory-dashboard
+        run: npm ci
+      - name: Run frontend privacy and accessibility tests
+        working-directory: apps/observatory-dashboard
+        run: npm test
+      - name: Run production build
+        working-directory: apps/observatory-dashboard
+        run: npm run build

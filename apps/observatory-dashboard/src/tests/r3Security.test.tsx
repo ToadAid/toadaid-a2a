@@ -115,6 +115,9 @@ describe('R3-B: SecurityView fails closed on invalid authority-flag data', () =>
   for (const [label, invalid] of invalidCases) {
     it(`shows NO "ENFORCED FALSE" and a fail-closed warning for ${label}`, () => {
       render(<SecurityView authorityFlags={invalid as unknown as AuthorityFlags} />);
+      // R4 strengthening: substring-level assertion — the phrase must not
+      // appear anywhere in the rendered DOM, including inside paragraph text.
+      expect(bodyText().includes('ENFORCED FALSE')).toBe(false);
       expect(screen.queryAllByText('ENFORCED FALSE')).toHaveLength(0);
       expect(screen.getByLabelText('Invalid authority flag state')).toBeTruthy();
       expect(bodyText()).toContain('AUTHORITY FLAG DATA INVALID');
@@ -126,8 +129,9 @@ describe('R3-B: SecurityView fails closed on invalid authority-flag data', () =>
   it('never echoes unexpected extra flag names into the interface', () => {
     const polluted = { ...VALID_FLAGS, accessToken: false, shadowFlag: true } as unknown as AuthorityFlags;
     render(<SecurityView authorityFlags={polluted} />);
-    expect(bodyText()).not.toContain('accessToken');
-    expect(bodyText()).not.toContain('shadowFlag');
+    expect(bodyText().includes('accessToken')).toBe(false);
+    expect(bodyText().includes('shadowFlag')).toBe(false);
+    expect(bodyText().includes('ENFORCED FALSE')).toBe(false);
     expect(screen.queryAllByText('ENFORCED FALSE')).toHaveLength(0);
   });
 });
