@@ -16,6 +16,9 @@ test('home is responsive, keyboard accessible and links to the complete journey'
  const unexpected:string[]=[];page.on('request',request=>{if(new URL(request.url()).origin!==new URL(info.project.use.baseURL as string??'http://127.0.0.1:4389').origin)unexpected.push(request.url());});
  await page.goto('/');await expect(page.getByRole('heading',{level:1})).toContainText('Human sovereignty.');
  await expect(page.getByRole('img',{name:/Authentic Blue Toby/})).toBeVisible();
+ const hero=page.getByRole('region',{name:/One pond/});
+ await expect(hero.getByRole('link',{name:/Visit ToadAid Portal/})).toHaveAttribute('href','https://portal.toadaid.org/');
+ await expect(hero.getByRole('link',{name:/Explore A2A architecture/})).toHaveAttribute('href','https://portal.toadaid.org/a2a/');
  await expect(page.getByRole('link',{name:/Explore Observatory/}).first()).toHaveAttribute('href','/dashboard/');
  await expect(page.getByRole('link',{name:/Read participation guide/})).toHaveAttribute('href','/pond/guide.md');
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
