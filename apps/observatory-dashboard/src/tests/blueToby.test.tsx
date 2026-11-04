@@ -20,8 +20,8 @@ describe("Blue Toby Mascot & Mobile Qualification Regressions", () => {
 
   it("renders all four critical mobile security invariants completely", () => {
     render(<App />);
-    expect(screen.getByText(/LOCAL SYNTHETIC FOUNDATION/i)).toBeInTheDocument();
-    expect(screen.getAllByText(/NOT DEPLOYED/i).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText(/SYNTHETIC PREVIEW — NO LIVE AGENTS/i)).toBeInTheDocument();
+    // Verified always-truthful SYNTHETIC PREVIEW — NO LIVE AGENTS replaces temporary NOT DEPLOYED badge
     expect(screen.getByText(/A2A CHAT HAS ZERO EXECUTION AUTHORITY/i)).toBeInTheDocument();
     expect(screen.getAllByText(/AUTHORITY IS NEVER ASSUMED/i).length).toBeGreaterThanOrEqual(1);
   });

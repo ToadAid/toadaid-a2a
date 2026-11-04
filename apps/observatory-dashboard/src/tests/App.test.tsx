@@ -15,7 +15,7 @@ describe('ToadAid Agent Observatory App Shell', () => {
   it('renders prominent synthetic foundation disclaimer', () => {
     render(<App />);
     expect(
-      screen.getByText(/STATUS: LOCAL SYNTHETIC FOUNDATION/i)
+      screen.getByText(/SYNTHETIC PREVIEW — NO LIVE AGENTS/i)
     ).toBeInTheDocument();
     expect(
       screen.getByText(/A2A CHAT HAS ZERO EXECUTION AUTHORITY/i)

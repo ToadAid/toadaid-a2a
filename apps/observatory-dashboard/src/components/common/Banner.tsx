@@ -13,26 +13,16 @@ export const SyntheticNoticeBanner: React.FC<{ className?: string }> = ({ classN
     role="region"
     aria-label="Synthetic Security Environment Invariants"
   >
-    {/* Left Column: Status + Boundary Badges */}
+    {/* Left Column: Always-Truthful Status + Authority Constraint */}
     <div className="flex flex-col sm:flex-row sm:items-center gap-2.5">
       <div className="flex items-center gap-2">
         <span className="w-2.5 h-2.5 rounded-full bg-[var(--color-jade)] animate-pulse shrink-0" aria-hidden="true" />
         <span className="font-bold text-[var(--color-jade)] tracking-wide">
-          STATUS: LOCAL SYNTHETIC FOUNDATION
+          SYNTHETIC PREVIEW — NO LIVE AGENTS
         </span>
       </div>
 
       <div className="flex flex-wrap items-center gap-1.5 text-[11px] sm:text-xs">
-        <span
-          className="px-2 py-0.5 rounded font-bold uppercase tracking-wider"
-          style={{
-            background: "rgba(239, 68, 68, 0.15)",
-            color: "var(--color-danger)",
-            border: "1px solid rgba(239, 68, 68, 0.35)",
-          }}
-        >
-          NOT DEPLOYED
-        </span>
         <span
           className="px-2 py-0.5 rounded text-[var(--color-text-primary)]"
           style={{
@@ -103,10 +93,8 @@ export const SecurityNoticeBanner: React.FC = () => (
         READ-ONLY GOVERNANCE CONSOLE — SYNTHETIC SEAMS
       </h4>
       <p className="text-[var(--color-text-muted)] leading-relaxed text-xs">
-        P0D-A2 (credential lifecycle and revocation, PR #20) and P0D-A3A (restart-safe lifecycle
-        checkpoint, PR #21) are MERGED into this repository. This console remains entirely offline and
-        synthetic — no production system is connected and no live data source exists yet. All active
-        management functions below are simulated, disabled, and marked:
+        The P0D-A2 credential lifecycle and revocation controls (PR #20) and P0D-A3A restart-safe checkpointing
+        (PR #21) are synthetic reference implementations. All active management functions below are simulated, disabled, and marked:
         <span className="font-mono font-bold text-[var(--color-text-contrast)] ml-1">
           NOT IMPLEMENTED — DIRECTOR AUTHORIZATION REQUIRED
         </span>.
