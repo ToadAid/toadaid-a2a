@@ -18,7 +18,7 @@ Following Director review, the initial public preview is standardized strictly o
 - **Single Entry Point:** `https://agent.toadaid.org/` serves `dist/index.html`.
 - **No Unbuilt Subpath Promises:** Unqualified `/dashboard/` URLs are removed. Subpath routing is neither claimed nor advertised in this cut.
 - **Client-Side Views:** Navigation across the five views (Overview, Directory, Activity, Communication, Security) is managed entirely client-side via state and search query parameters (e.g. `https://agent.toadaid.org/?view=activity`), ensuring zero dependency on server-side path rewrites.
-- **Static 404 Routing:** The static fallback page `dist/404.html` is returned with HTTP status 404 by Cloudflare Pages for any unmatched static path. It provides a clear notice and a return link to the root (`./`).
+- **Static 404 Routing:** The static fallback page `dist/404.html` is returned with HTTP status 404 by Cloudflare Pages for any unmatched static path. It provides a clear notice and an absolute return link to the root (`href="/"`), ensuring reliable navigation back to the root preview even when triggered from deeply nested nonexistent paths (e.g. `/missing/section/` or `/dashboard/`).
 - **No Functions Routing:** The obsolete `_routes.json` file is removed. The preview is a 100% static asset deployment with zero Cloudflare Workers or Pages Functions dependencies.
 
 ---
@@ -85,11 +85,13 @@ Cloudflare Pages applies the committed static `_headers` file across all respons
 
 ### Subdomain Storage vs. Cookie Scope Realities:
 - **Client Storage Isolation:** Origin-bound storage (`localStorage`, `sessionStorage`, `IndexedDB`) is strictly isolated between origins. `agent.toadaid.org` cannot access `portal.toadaid.org` client storage.
-- **Parent-Domain Cookie Caveat:** Standard browser security models allow parent-domain scoped cookies (e.g., `Domain=.toadaid.org` or `Domain=toadaid.org`) to be sent automatically to all subdomains.
+- **Parent-Domain Cookie Transmission Risk:** Standard browser security models dictate that cookies issued with parent-domain scope (e.g., `Domain=.toadaid.org` or `Domain=toadaid.org`) are automatically sent by browsers to all subdomains on every HTTP request.
 - **Enforced Security Policy:**
-  1. Portal authentication cookies must use **host-only** scope (omit the `Domain` attribute) to restrict them strictly to `portal.toadaid.org`.
-  2. The Agent Observatory application does NOT read, write, or transmit cookies.
-  3. No authentication credentials, tokens, or private keys may be passed in URLs or query strings.
+  1. **Host-Only Scope is Mandatory:** Portal authentication cookies must use **host-only** scope by omitting the `Domain` attribute entirely. This restricts them exclusively to `portal.toadaid.org`.
+  2. **`HttpOnly` is Not an Alternative to Scope:** Setting `HttpOnly` mitigates client-side JavaScript access via `document.cookie` (XSS protection), but does NOT prevent the browser from transmitting parent-domain cookies over the network to sibling subdomains.
+  3. **Client-Side Safeguard Limitation:** Merely not reading or referencing cookies in Agent Observatory client-side JavaScript cannot prevent the browser from transmitting parent-domain cookies if Portal misconfigures their scope.
+  4. **Defense-in-Depth Configuration:** Portal authentication cookies must strictly combine host-only scope (omitting `Domain`) with `Secure; HttpOnly; SameSite=Lax` (or `SameSite=Strict`) as appropriate.
+  5. **No Credential Leakage:** No authentication credentials, tokens, or private keys may be passed in URLs or query strings.
 
 ---
 

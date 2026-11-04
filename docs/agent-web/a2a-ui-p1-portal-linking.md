@@ -57,7 +57,7 @@ When linking from `portal.toadaid.org` to `agent.toadaid.org/`:
 ### Security Requirements:
 1. **`rel="noopener noreferrer"`:** Mandatory. Prevents the target page from obtaining access to the `window.opener` object of the Portal session.
 2. **Zero Credential Sharing:** The Portal must NEVER append session tokens, cookies, auth headers, private keys, or wallet addresses to the URL query parameters or hash.
-3. **Parent-Domain Cookie Scope Protection:** Portal authentication cookies must use **host-only** scope (no `Domain` attribute) or `HttpOnly` flags. Standard browser security rules allow `Domain=.toadaid.org` cookies to be sent across all subdomains. The Observatory preview neither expects nor processes Portal cookies.
+3. **Mandatory Host-Only Cookie Scoping:** Portal authentication cookies MUST use **host-only** scope (omit the `Domain` attribute entirely) to prevent them from being transmitted to sibling subdomains such as `agent.toadaid.org`. Setting `HttpOnly` mitigates client-side script access via `document.cookie`, but it does NOT prevent the browser network layer from attaching parent-domain cookies to requests across subdomains. Merely not reading cookies in Observatory client-side JavaScript cannot prevent the browser from sending parent-domain cookies if Portal erroneously issues wildcard-domain cookies. Therefore, Portal authentication must strictly combine host-only scope (omitting `Domain`) with `Secure; HttpOnly; SameSite=Lax` (or `SameSite=Strict`) as appropriate.
 4. **Cross-Origin Storage Isolation:** The Observatory runs in complete origin-bound storage isolation (`localStorage`, `sessionStorage`).
 
 ---

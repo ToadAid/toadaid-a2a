@@ -59,10 +59,30 @@ describe('A2A-UI-P1-R1 Public Preview Routing & Security Qualification', () => {
     expect(headersContent).toContain('Cache-Control: public, max-age=31536000, immutable');
   });
 
-  it('verifies static 404 fallback page contains return link to root', () => {
+  it('verifies static 404 fallback page contains absolute return link to root and resolves from nested paths', () => {
     const fourOhFour = fs.readFileSync(path.join(distDir, '404.html'), 'utf-8');
     expect(fourOhFour).toContain('404 — Route Not Found');
-    expect(fourOhFour).toContain('href="./"');
+    expect(fourOhFour).toContain('href="/"');
+
+    // R2 qualification: Verify href="/" resolves strictly to root "/"
+    // even when loaded from deeply nested nonexistent URLs (e.g. /missing/section/ or /dashboard/)
+    const nestedTestUrls = [
+      'https://agent.toadaid.org/missing/section/',
+      'https://agent.toadaid.org/dashboard/',
+      'https://agent.toadaid.org/deeply/nested/nonexistent/subpath/',
+      'https://agent.toadaid.org/unmatched-route',
+    ];
+
+    const match = fourOhFour.match(/href="([^"]+)"/);
+    expect(match).not.toBeNull();
+    const hrefValue = match![1];
+    expect(hrefValue).toBe('/');
+
+    for (const nestedUrl of nestedTestUrls) {
+      const resolved = new URL(hrefValue, nestedUrl);
+      expect(resolved.pathname).toBe('/');
+      expect(resolved.origin).toBe('https://agent.toadaid.org');
+    }
   });
 
   it('performs deterministic bundle scanning for known telemetry beacons and credentials', () => {
