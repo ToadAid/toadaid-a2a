@@ -54,13 +54,13 @@ export const SYNTHETIC_FLOW_SCENARIOS: CommunicationScenario[] = [
       {
         name: "6. Tamper-Evident Journal Record",
         status: "passed",
-        detail: "Sha-256 metadata digest recorded to in-memory hash chain. Zero execution authority.",
+        detail: "An ILLUSTRATIVE journal-digest placeholder is shown; no digest is computed or verified anywhere in this offline synthetic console. Zero execution authority.",
         failClosedRule: "No delivery permitted without journal recording."
       }
     ],
     receiptPreview: {
       receiptId: "rec-synt-pond-9081",
-      journalHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      journalHash: "ILLUSTRATIVE-PLACEHOLDER — NOT A COMPUTED OR VERIFIED DIGEST",
       authorityFlags: {
         executionAuthorized: false,
         publicationAuthorized: false,

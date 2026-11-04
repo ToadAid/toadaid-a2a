@@ -3,13 +3,20 @@ import type { AuthorityFlags } from "../../types/observatory";
 import { Card } from "../common/Card";
 import { SecurityNoticeBanner } from "../common/Banner";
 import { AuthorityFlagBadge } from "../common/Badge";
-import { ShieldIcon } from "../common/Icons";
+import { ShieldIcon, AlertTriangleIcon } from "../common/Icons";
+import { ObservatoryAdapter } from "../../services/observatoryAdapter";
 
 interface SecurityViewProps {
   authorityFlags: AuthorityFlags;
 }
 
 export const SecurityView: React.FC<SecurityViewProps> = ({ authorityFlags }) => {
+  // R3-B: strict runtime validation, fail-closed. "ENFORCED FALSE" is only a
+  // claim the interface may make for data that strictly conforms to the
+  // five-flag, strictly-boolean-false schema; invalid data must never be
+  // rendered that way.
+  const flagValidation = ObservatoryAdapter.validateAuthorityFlags(authorityFlags);
+
   return (
     <div className="space-y-6">
       {/* Security Governance Notice */}
@@ -46,26 +53,60 @@ export const SecurityView: React.FC<SecurityViewProps> = ({ authorityFlags }) =>
         </div>
       </div>
 
-      {/* Fixed All-False Authority Flags */}
-      <Card
-        title="Immutable Authority Flag Block"
-        subtitle="Fixed schema constraint: All five flags must remain false by construction"
-        highlight="jade"
-      >
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {Object.entries(authorityFlags).map(([flag, val]) => (
-            <div
-              key={flag}
-              className="p-3 rounded-lg border border-[var(--color-border-subtle)] bg-[var(--color-surface-card-hover)] flex items-center justify-between"
-            >
-              <AuthorityFlagBadge flagName={flag} active={val} />
-              <span className="text-[11px] font-mono text-[var(--color-success)] font-bold">
-                ENFORCED FALSE
-              </span>
+      {/* Fixed All-False Authority Flags — rendered only for validated-conforming data */}
+      {flagValidation.valid ? (
+        <Card
+          title="Immutable Authority Flag Block"
+          subtitle="Fixed schema constraint: All five flags must remain false by construction"
+          highlight="jade"
+        >
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {Object.entries(authorityFlags).map(([flag, val]) => (
+              <div
+                key={flag}
+                className="p-3 rounded-lg border border-[var(--color-border-subtle)] bg-[var(--color-surface-card-hover)] flex items-center justify-between"
+              >
+                <AuthorityFlagBadge flagName={flag} active={val} />
+                <span className="text-[11px] font-mono text-[var(--color-success)] font-bold">
+                  ENFORCED FALSE
+                </span>
+              </div>
+            ))}
+          </div>
+        </Card>
+      ) : (
+        <Card
+          title="Immutable Authority Flag Block"
+          subtitle="Runtime authority-flag data failed strict validation — display is withheld"
+          highlight="jade"
+        >
+          <div
+            className="p-4 rounded-lg space-y-2 text-xs"
+            style={{
+              background: "rgba(239, 68, 68, 0.12)",
+              border: "1px solid rgba(239, 68, 68, 0.35)",
+            }}
+            role="alert"
+            aria-label="Invalid authority flag state"
+          >
+            <div className="flex items-center gap-2 font-mono font-bold text-[var(--color-danger)] uppercase tracking-wider">
+              <AlertTriangleIcon size={16} />
+              <span>AUTHORITY FLAG DATA INVALID — DISPLAY WITHHELD (FAIL CLOSED)</span>
             </div>
-          ))}
-        </div>
-      </Card>
+            <p className="text-[var(--color-text-muted)] leading-relaxed">
+              The runtime authority-flag data did not conform to the strict five-flag,
+              strictly-boolean-false schema. Rendering "ENFORCED FALSE" for invalid data would be a
+              false safety claim, so NO flags are displayed. Treat this as an invalid-state warning,
+              not an enforcement result.
+            </p>
+            <ul className="list-disc pl-5 font-mono text-[var(--color-text-dim)] space-y-0.5">
+              {flagValidation.problems.map((problem, index) => (
+                <li key={index}>{problem}</li>
+              ))}
+            </ul>
+          </div>
+        </Card>
+      )}
 
       {/* Four Trust Seams Architecture Card */}
       <Card

@@ -8,6 +8,7 @@ import type {
 } from '../types/observatory';
 import { PRIMARY_SYNTHETIC_FEED } from '../data/syntheticFeed';
 import { SYNTHETIC_DIRECTORY_AGENTS } from '../data/syntheticDirectory';
+import { projectedSearchText } from './payloadProjection';
 
 export interface DashboardStats {
   totalEvents: number;
@@ -25,6 +26,20 @@ export interface ActivityFilterOptions {
   evidenceClass?: EvidenceClass | 'all';
   searchQuery?: string;
   claimedOnly?: boolean;
+}
+
+export const AUTHORITY_FLAG_KEYS = [
+  'executionAuthorized',
+  'publicationAuthorized',
+  'deploymentAuthorized',
+  'agentRegistrationActive',
+  'publicDirectoryExposed',
+] as const;
+
+export interface AuthorityFlagValidation {
+  valid: boolean;
+  /** Fail-closed problem descriptors; they never echo runtime values. */
+  problems: string[];
 }
 
 export class ObservatoryAdapter {
@@ -127,7 +142,9 @@ export class ObservatoryAdapter {
         const matchesId = item.eventId.toLowerCase().includes(query);
         const matchesCorr = item.correlationId.toLowerCase().includes(query);
         const matchesSource = item.sourceIdentity.toLowerCase().includes(query);
-        const matchesPayload = JSON.stringify(item.payload).toLowerCase().includes(query);
+        // Payload matching runs over the fail-closed allowlisted projection
+        // only (R3-A) — raw payload data never feeds search results.
+        const matchesPayload = projectedSearchText(item.eventKind, item.payload).includes(query);
         if (!matchesId && !matchesCorr && !matchesSource && !matchesPayload) {
           return false;
         }
@@ -161,6 +178,39 @@ export class ObservatoryAdapter {
     } catch {
       return isoString;
     }
+  }
+
+  /**
+   * Strict runtime validation of authority-flag data (R3-B, fail-closed).
+   *
+   * Data is valid ONLY when it is a plain object with exactly the five
+   * required keys and every value is strictly boolean false. Anything
+   * else — missing flags, extra flags, true values, non-boolean values,
+   * non-object data — is invalid and must never be rendered as
+   * "ENFORCED FALSE". Problem descriptors name categories only, never
+   * runtime values or unexpected key names.
+   */
+  public static validateAuthorityFlags(flags: unknown): AuthorityFlagValidation {
+    if (flags === null || typeof flags !== 'object' || Array.isArray(flags)) {
+      return { valid: false, problems: ['authority-flag data is not a plain object'] };
+    }
+    const present = Object.keys(flags as Record<string, unknown>);
+    const problems: string[] = [];
+    for (const key of AUTHORITY_FLAG_KEYS) {
+      if (!present.includes(key)) {
+        problems.push(`missing required authority flag: ${key}`);
+      } else {
+        const value = (flags as Record<string, unknown>)[key];
+        if (typeof value !== 'boolean' || value !== false) {
+          // Never echo the offending value back into the interface.
+          problems.push('one or more authority flags are not strictly boolean false');
+        }
+      }
+    }
+    if (present.some((key) => !(AUTHORITY_FLAG_KEYS as readonly string[]).includes(key))) {
+      problems.push('one or more unexpected extra authority flags are present');
+    }
+    return { valid: problems.length === 0, problems };
   }
 
   public static formatEvidenceLabel(evidenceClass: EvidenceClass): { label: string; verified: boolean; tone: 'success' | 'warning' | 'info' | 'danger' } {

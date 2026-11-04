@@ -103,8 +103,10 @@ export const SecurityNoticeBanner: React.FC = () => (
         READ-ONLY GOVERNANCE CONSOLE — SYNTHETIC SEAMS
       </h4>
       <p className="text-[var(--color-text-muted)] leading-relaxed text-xs">
-        The P0D-A2 credential lifecycle and revocation controls (PR #20) are currently undergoing independent
-        Director review. All active management functions below are simulated, disabled, and marked:
+        P0D-A2 (credential lifecycle and revocation, PR #20) and P0D-A3A (restart-safe lifecycle
+        checkpoint, PR #21) are MERGED into this repository. This console remains entirely offline and
+        synthetic — no production system is connected and no live data source exists yet. All active
+        management functions below are simulated, disabled, and marked:
         <span className="font-mono font-bold text-[var(--color-text-contrast)] ml-1">
           NOT IMPLEMENTED — DIRECTOR AUTHORIZATION REQUIRED
         </span>.

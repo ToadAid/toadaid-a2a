@@ -5,6 +5,7 @@ import { EvidenceBadge } from "../common/Badge";
 import { Modal } from "../common/Modal";
 import { SearchIcon, ShieldIcon } from "../common/Icons";
 import { ObservatoryAdapter } from "../../services/observatoryAdapter";
+import { projectPayload, projectedSearchText } from "../../services/payloadProjection";
 
 interface ActivityViewProps {
   events: ObservedItem[];
@@ -32,7 +33,9 @@ export const ActivityView: React.FC<ActivityViewProps> = ({
       const matchCorr = item.correlationId.toLowerCase().includes(q);
       const matchSource = item.sourceIdentity.toLowerCase().includes(q);
       const matchKind = item.eventKind.toLowerCase().includes(q);
-      const matchPayload = JSON.stringify(item.payload).toLowerCase().includes(q);
+      // Payload matching runs over the fail-closed allowlisted projection
+      // only (R3-A) — raw payload data never feeds search results or display.
+      const matchPayload = projectedSearchText(item.eventKind, item.payload).includes(q);
       if (!matchId && !matchCorr && !matchSource && !matchKind && !matchPayload) return false;
     }
     return true;
@@ -191,21 +194,47 @@ export const ActivityView: React.FC<ActivityViewProps> = ({
             </div>
 
             <div>
-              <span className="text-[var(--color-text-dim)] block mb-1 font-sans font-semibold">
-                Payload Inspection (Exact-whitelist verified fields)
-              </span>
-              <pre
-                className="p-3.5 rounded-lg border border-[var(--color-border-subtle)] bg-[#040c0e] text-[#a7f3d0] overflow-x-auto text-xs"
-                tabIndex={0}
-                aria-label="Raw event payload JSON"
-              >
-                {JSON.stringify(selectedEvent.payload, null, 2)}
-              </pre>
+              {(() => {
+                const projected = projectPayload(
+                  selectedEvent.eventKind,
+                  selectedEvent.payload
+                );
+                return (
+                  <>
+                    <span className="text-[var(--color-text-dim)] block mb-1 font-sans font-semibold">
+                      Payload Inspection (fail-closed allowlisted projection)
+                    </span>
+                    <pre
+                      className="p-3.5 rounded-lg border border-[var(--color-border-subtle)] bg-[#040c0e] text-[#a7f3d0] overflow-x-auto text-xs"
+                      tabIndex={0}
+                      aria-label="Allowlisted event payload projection"
+                    >
+                      {JSON.stringify(projected.fields, null, 2)}
+                    </pre>
+                    {projected.withheldFieldCount > 0 && (
+                      <div
+                        className="mt-2 p-2.5 rounded-lg text-xs font-mono text-[var(--color-gold)]"
+                        style={{
+                          background: "rgba(245, 158, 11, 0.12)",
+                          border: "1px solid rgba(245, 158, 11, 0.35)",
+                        }}
+                        role="status"
+                      >
+                        FAIL-CLOSED REDACTION: {projected.withheldFieldCount} unexpected or
+                        non-conforming payload field(s) withheld — their names and values are not displayed.
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </div>
 
             <div className="p-3 rounded-lg bg-[rgba(13,148,136,0.1)] border border-[rgba(45,212,191,0.25)] text-xs text-[var(--color-text-dim)] font-sans">
               <ShieldIcon size={14} className="inline mr-1 text-[var(--color-jade)]" />
-              Privacy Floor Preserved: Private prompts, credentials, and raw chat contents are strictly excluded by the payload whitelist schema.
+              Privacy Floor: only explicit, event-kind-specific allowlisted metadata fields are rendered; unexpected
+              fields are withheld without exposing names or values. This client-side projection is a browser-side
+              safeguard for the trusted synthetic feed, not a trust boundary — for a future production data source,
+              real private data must be excluded by trusted server-side projection BEFORE it reaches the browser.
             </div>
           </div>
         </Modal>

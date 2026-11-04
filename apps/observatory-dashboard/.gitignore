@@ -22,3 +22,23 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# R3 hardening: secrets, env files, key material, and local outputs
+# must never enter source control (A2A-UI-P0-R3-D)
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.key
+*.crt
+*.csr
+*.p12
+*.pfx
+*.jks
+*.session
+coverage
+coverage-local
+screenshots
+screenshots-local
+*.har
