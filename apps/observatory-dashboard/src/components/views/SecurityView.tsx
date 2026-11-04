@@ -147,7 +147,7 @@ export const SecurityView: React.FC<SecurityViewProps> = ({ authorityFlags }) =>
         subtitle="Future privileged operational controls — Gated by Director authorization"
       >
         <div className="space-y-3">
-          <div className="p-4 rounded-xl border border-[var(--color-border-subtle)] bg-[rgba(0,0,0,0.2)] opacity-60 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="p-4 rounded-xl border border-[var(--color-border-subtle)] bg-[var(--color-surface-card-hover)] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h4 className="text-xs font-mono font-bold text-[var(--color-text-primary)]">
                 Emergency Agent Disablement
@@ -165,7 +165,7 @@ export const SecurityView: React.FC<SecurityViewProps> = ({ authorityFlags }) =>
             </button>
           </div>
 
-          <div className="p-4 rounded-xl border border-[var(--color-border-subtle)] bg-[rgba(0,0,0,0.2)] opacity-60 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="p-4 rounded-xl border border-[var(--color-border-subtle)] bg-[var(--color-surface-card-hover)] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h4 className="text-xs font-mono font-bold text-[var(--color-text-primary)]">
                 Rotate Credential Generation Epoch
@@ -183,7 +183,7 @@ export const SecurityView: React.FC<SecurityViewProps> = ({ authorityFlags }) =>
             </button>
           </div>
 
-          <div className="p-4 rounded-xl border border-[var(--color-border-subtle)] bg-[rgba(0,0,0,0.2)] opacity-60 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="p-4 rounded-xl border border-[var(--color-border-subtle)] bg-[var(--color-surface-card-hover)] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h4 className="text-xs font-mono font-bold text-[var(--color-text-primary)]">
                 Deploy Public Directory Profile

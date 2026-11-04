@@ -128,7 +128,7 @@ export const Navigation: React.FC<NavigationProps> = ({
                       <span
                         className={`text-[11px] px-1.5 py-0.2 rounded-full font-mono ${
                           isActive
-                            ? "bg-[var(--color-jade)] text-[#061114] font-bold"
+                            ? "bg-[var(--color-jade)] text-[var(--color-text-on-accent)] font-bold"
                             : "bg-[var(--color-border-subtle)] text-[var(--color-text-dim)]"
                         }`}
                       >
@@ -206,7 +206,7 @@ export const Navigation: React.FC<NavigationProps> = ({
                       <span
                         className={`text-[10px] px-2 py-0.5 rounded-full font-mono ${
                           isActive
-                            ? "bg-[var(--color-jade)] text-[#061114] font-bold"
+                            ? "bg-[var(--color-jade)] text-[var(--color-text-on-accent)] font-bold"
                             : "bg-[var(--color-border-subtle)] text-[var(--color-text-dim)]"
                         }`}
                       >

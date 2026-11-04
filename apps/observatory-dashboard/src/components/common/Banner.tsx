@@ -67,9 +67,9 @@ export const DirectoryNoticeBanner: React.FC = () => (
         SYNTHETIC DIRECTORY PREVIEW — NOT PUBLIC
       </h4>
       <p className="text-[var(--color-text-muted)] leading-relaxed text-xs">
-        This is a private owner preview of synthetic agent cards generated for local testing. It confers zero public search indexing,
-        no publication consent assumptions, and contains no real owner data. Live public discovery remains
-        gated until formal community rights qualification.
+        These synthetic cards demonstrate a future owner view; this public demonstration contains no real owner data.
+        “NOT PUBLIC” refers to live agent discovery: no real agents are publicly listed, no publication consent is assumed,
+        and live public discovery remains gated until formal community rights qualification.
       </p>
     </div>
   </div>

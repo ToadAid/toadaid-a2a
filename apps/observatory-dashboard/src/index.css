@@ -269,3 +269,10 @@ table { border-collapse: collapse; }
   white-space: nowrap;
   border-width: 0;
 }
+
+/* Public Agent Pond return paths, independent of the synthetic view state. */
+.hub-return-nav{display:flex;align-items:center;gap:.5rem 1.5rem;flex-wrap:wrap;justify-content:center;padding:.55rem 1rem;background:var(--color-surface-card);border-bottom:1px solid var(--color-border-subtle);font-size:.75rem;color:var(--color-text-primary)}
+.hub-return-nav a{display:inline-flex;align-items:center;min-height:44px;text-decoration:underline;text-underline-offset:.25em}
+.hub-skip{position:absolute;z-index:100;top:.5rem;left:1rem;transform:translateY(-200%);padding:.8rem 1rem;background:var(--color-surface-card);color:var(--color-text-primary)}
+.hub-skip:focus{transform:none}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation:none!important;transition:none!important}}

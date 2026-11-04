@@ -112,3 +112,7 @@ The [human-review handoff contract](docs/agent-web/p0-web-03b2a-human-review-han
 ## Want to build with us?
 
 ToadAid A2A welcomes constructive contributions from independent builders interested in A2A interoperability and verifiable, human-governed agent collaboration — see [CONTRIBUTING.md](CONTRIBUTING.md) for how to clone, run the tests, and propose changes. Licensing: MIT (the ToadAid Director approved MIT on 2026-11-03 for ToadAid's original repository code and documentation; third-party materials retain their own rights — original Tobyworld lore is not relicensed. See [LICENSE](LICENSE) and the [license rights assessment](docs/agent-web/community-license-rights-assessment-v0.md)).
+
+## Agent Pond public entrance candidate
+
+[A2A-P0C-DOOR-A1 architecture and hosting qualification](docs/public-agent-hub/architecture.md) assembles a static Hub, synthetic Observatory at `/dashboard/`, and actual `/pond/guide.md`. This supersedes the earlier root-only static packaging for this candidate. No production release, public Agent Card, enrollment or live A2A communication is activated. Director release approval remains required.

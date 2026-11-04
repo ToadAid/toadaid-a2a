@@ -9,11 +9,21 @@ on:
     branches: [main]
     paths:
       - 'apps/observatory-dashboard/**'
+      - 'apps/agent-hub/**'
+      - 'agent_web/public_hub.py'
+      - 'tools/serve_public_hub_preview.mjs'
+      - 'tools/qualify_public_hub.py'
+      - 'ops/toadaid-agent-pond.service.in'
       - '.github/workflows/agent-observatory-frontend.yml'
   push:
     branches: [main]
     paths:
       - 'apps/observatory-dashboard/**'
+      - 'apps/agent-hub/**'
+      - 'agent_web/public_hub.py'
+      - 'tools/serve_public_hub_preview.mjs'
+      - 'tools/qualify_public_hub.py'
+      - 'ops/toadaid-agent-pond.service.in'
       - '.github/workflows/agent-observatory-frontend.yml'
 
 permissions:
@@ -41,3 +51,14 @@ jobs:
       - name: Run frontend privacy and accessibility tests
         working-directory: apps/observatory-dashboard
         run: npm test
+      - name: Install isolated Chromium
+        working-directory: apps/observatory-dashboard
+        run: npx playwright install --with-deps chromium
+      - name: Qualify assembled Hub and Observatory subpath
+        working-directory: apps/observatory-dashboard
+        run: npm run test:hub
+      - name: Qualify every release artifact through the static origin
+        run: |
+          python3 -m agent_web.public_hub build --output "$RUNNER_TEMP/agent-hub-release" --release-id agent-pond-ci
+          read -r agent_hub_sha agent_hub_filename < "$RUNNER_TEMP/agent-hub-release/release-manifest.sha256"
+          python3 -m tools.qualify_public_hub --release "$RUNNER_TEMP/agent-hub-release" --manifest-sha256 "$agent_hub_sha" --receipt "$RUNNER_TEMP/agent-hub-http-receipt.json"

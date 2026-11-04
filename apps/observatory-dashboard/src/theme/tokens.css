@@ -68,14 +68,15 @@
   --color-text-primary: #f5faf7;        /* Warm cream heading text */
   --color-text-secondary: #b4e0c7;      /* Deed Atlas soft mint accent */
   --color-text-muted: #93c7b5;          /* Soft sage/mint body text */
-  --color-text-dim: #74a897;            /* Muted labels */
+  --color-text-dim: #9bc5b6;            /* Muted labels */
   --color-text-contrast: #ffffff;
 
   /* Tobyworld & Observatory Accents */
   --color-mint: #b4e0c7;
   --color-mint-glow: rgba(180, 224, 199, 0.2);
   --color-pond-teal: #0d9488;
-  --color-jade: #14b8a6;                /* Technical telemetry jade */
+  --color-text-on-accent: #061114;
+  --color-jade: #50d4c0;                /* Technical telemetry jade */
   --color-jade-glow: rgba(20, 184, 166, 0.25);
 
   --color-gold: #f59e0b;                /* Lantern gold governance */
@@ -83,7 +84,7 @@
   --color-gold-bg: rgba(245, 158, 11, 0.12);
 
   /* Semantic Status Palettes */
-  --color-success: #10b981;
+  --color-success: #51d6a0;
   --color-success-bg: rgba(16, 185, 129, 0.15);
   --color-success-border: rgba(16, 185, 129, 0.35);
 
@@ -91,7 +92,7 @@
   --color-warning-bg: rgba(245, 158, 11, 0.15);
   --color-warning-border: rgba(245, 158, 11, 0.35);
 
-  --color-danger: #ef4444;
+  --color-danger: #ff8888;
   --color-danger-bg: rgba(239, 68, 68, 0.15);
   --color-danger-border: rgba(239, 68, 68, 0.35);
 
@@ -124,32 +125,33 @@
   --color-text-primary: #0a2620;        /* Deep pine forest heading */
   --color-text-secondary: #12483d;      /* Forest teal subtitle */
   --color-text-muted: #2a6357;          /* Balanced readability */
-  --color-text-dim: #4d7d72;
+  --color-text-dim: #345e52;
   --color-text-contrast: #000000;
 
   /* Semantic Palettes */
-  --color-mint: #0d9488;
+  --color-mint: #08685e;
   --color-pond-teal: #0f766e;
-  --color-jade: #0d9488;
+  --color-text-on-accent: #ffffff;
+  --color-jade: #08685e;
   --color-jade-glow: rgba(13, 148, 136, 0.15);
 
-  --color-gold: #b45309;
+  --color-gold: #874006;
   --color-gold-glow: rgba(180, 83, 9, 0.18);
   --color-gold-bg: rgba(245, 158, 11, 0.14);
 
-  --color-success: #059669;
+  --color-success: #06734e;
   --color-success-bg: rgba(5, 150, 105, 0.12);
   --color-success-border: rgba(5, 150, 105, 0.3);
 
-  --color-warning: #d97706;
+  --color-warning: #8a4600;
   --color-warning-bg: rgba(217, 119, 6, 0.12);
   --color-warning-border: rgba(217, 119, 6, 0.3);
 
-  --color-danger: #dc2626;
+  --color-danger: #b91c1c;
   --color-danger-bg: rgba(220, 38, 38, 0.1);
   --color-danger-border: rgba(220, 38, 38, 0.3);
 
-  --color-info: #0284c7;
+  --color-info: #075985;
   --color-info-bg: rgba(2, 132, 199, 0.1);
   --color-info-border: rgba(2, 132, 199, 0.3);
 
