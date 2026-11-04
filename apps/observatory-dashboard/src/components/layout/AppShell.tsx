@@ -1,6 +1,7 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import type { ViewMode, ObservedItem } from "../../types/observatory";
 import { defaultAdapter } from "../../services/observatoryAdapter";
+import { SyntheticNoticeBanner } from "../common/Banner";
 import { Header } from "./Header";
 import { Navigation } from "./Navigation";
 import { OverviewView } from "../views/OverviewView";
@@ -18,6 +19,19 @@ export const AppShell: React.FC = () => {
     }
     return "overview";
   });
+  useEffect(() => {
+    const restore = () => {
+      const value = new URLSearchParams(window.location.search).get("view") as ViewMode;
+      setCurrentView(["overview", "directory", "activity", "communication", "security"].includes(value) ? value : "overview");
+    };
+    window.addEventListener("popstate", restore);
+    return () => window.removeEventListener("popstate", restore);
+  }, []);
+  const selectView = (view: ViewMode) => {
+    setCurrentView(view);
+    window.history.pushState({}, "", `${window.location.pathname}?view=${view}`);
+    window.scrollTo({top: 0, behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"});
+  };
   const [selectedEvent, setSelectedEvent] = useState<ObservedItem | null>(null);
 
   const stats = defaultAdapter.getStats();
@@ -35,29 +49,34 @@ export const AppShell: React.FC = () => {
         color: "var(--color-text-primary)",
       }}
     >
+      <a className="hub-skip" href="#observatory-content">Skip to Observatory content</a>
+      <nav className="hub-return-nav" aria-label="Agent Pond destinations">
+        <a href="/">← Agent Pond</a>
+        <a href="/pond/guide.md">Participation guide</a>
+        <a href="https://portal.toadaid.org/a2a/" rel="noopener noreferrer">Portal architecture ↗</a>
+        <a href="https://github.com/ToadAid/toadaid-a2a" rel="noopener noreferrer">Public source ↗</a>
+      </nav>
       {/* Top Header */}
       <Header tenantRef={tenantRef} ownerRef={ownerRef} />
 
       {/* Primary Navigation Tabs */}
       <Navigation
         currentView={currentView}
-        onSelectView={(v) => {
-          setCurrentView(v);
-          window.scrollTo({ top: 0, behavior: "smooth" });
-        }}
+        onSelectView={selectView}
         eventCount={stats.totalEvents}
         agentCount={stats.totalAgents}
       />
 
       {/* Main View Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <main id="observatory-content" tabIndex={-1} className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <SyntheticNoticeBanner className="mb-6" />
         <div id={`panel-${currentView}`} role="tabpanel" aria-labelledby={`tab-${currentView}`}>
           {currentView === "overview" && (
             <OverviewView
               stats={stats}
               recentEvents={events}
               agents={agents}
-              onNavigateToView={(v) => setCurrentView(v)}
+              onNavigateToView={selectView}
               onSelectEvent={(evt) => setSelectedEvent(evt)}
             />
           )}

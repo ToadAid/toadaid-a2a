@@ -59,6 +59,7 @@ export const ActivityView: React.FC<ActivityViewProps> = ({
 
           <div>
             <select
+              aria-label="Filter by event kind"
               value={selectedKind}
               onChange={(e) => setSelectedKind(e.target.value as any)}
               className="w-full px-3 py-2 rounded-lg text-xs font-mono bg-[var(--color-surface-card-hover)] border border-[var(--color-border)] text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-border-focus)] cursor-pointer"
@@ -76,6 +77,7 @@ export const ActivityView: React.FC<ActivityViewProps> = ({
 
           <div>
             <select
+              aria-label="Filter by evidence class"
               value={selectedEvidence}
               onChange={(e) => setSelectedEvidence(e.target.value as any)}
               className="w-full px-3 py-2 rounded-lg text-xs font-mono bg-[var(--color-surface-card-hover)] border border-[var(--color-border)] text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-border-focus)] cursor-pointer"

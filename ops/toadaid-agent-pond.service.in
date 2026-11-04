@@ -1,0 +1,25 @@
+# REVIEW TEMPLATE ONLY. Substitute the approved absolute release and manifest SHA.
+# Install as a separate USER service only after Director release approval.
+[Unit]
+Description=ToadAid Agent Pond public static release
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=@RELEASE@
+ExecStart=/usr/bin/env -i PATH=/usr/bin:/bin /usr/bin/python3 -I @RELEASE@/runtime/public_hub.py serve --release @RELEASE@ --manifest-sha256 @MANIFEST_SHA256@ --port 4328
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+RestrictAddressFamilies=AF_INET
+CapabilityBoundingSet=
+UMask=0077
+MemoryMax=128M
+TasksMax=32
+TimeoutStopSec=15
+
+[Install]
+WantedBy=default.target

@@ -53,7 +53,7 @@ export const EvidenceBarChart: React.FC<EvidenceBarChartProps> = ({ data, total 
                   {cat.label}
                 </span>
                 <span className="font-mono text-[var(--color-text-dim)]">
-                  {count} <span className="opacity-60">({percentage}%)</span>
+                  {count} <span>({percentage}%)</span>
                 </span>
               </div>
               <div

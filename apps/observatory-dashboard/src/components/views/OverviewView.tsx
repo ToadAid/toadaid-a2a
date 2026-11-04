@@ -5,7 +5,6 @@ import { Card } from "../common/Card";
 import { StatusBadge, EvidenceBadge, ScopeBadge } from "../common/Badge";
 import { EvidenceBarChart } from "../charts/EvidenceBarChart";
 import { StatusDonutChart } from "../charts/StatusDonutChart";
-import { SyntheticNoticeBanner } from "../common/Banner";
 import { UsersIcon, ActivityIcon, ShieldIcon, AlertOctagonIcon, TerminalIcon, ArrowRightIcon } from "../common/Icons";
 import { ObservatoryAdapter, type DashboardStats } from "../../services/observatoryAdapter";
 
@@ -26,8 +25,6 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
 }) => {
   return (
     <div className="space-y-6">
-      {/* Disclaimer Banner */}
-      <SyntheticNoticeBanner />
 
       {/* KPI Top Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

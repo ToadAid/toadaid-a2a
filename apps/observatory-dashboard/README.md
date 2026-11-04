@@ -1,3 +1,7 @@
+# Observatory static public candidate
+
+The preserved synthetic dashboard is assembled at `/dashboard/` by the [Agent Hub release process](../../docs/public-agent-hub/architecture.md). Standalone Vite output remains relative; it is not the complete public release. Run `npm test` and `npm run test:hub` after installing Chromium. No live agents or protocol endpoints are enabled.
+
 # React + TypeScript + Vite
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
