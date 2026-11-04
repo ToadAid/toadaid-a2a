@@ -4,51 +4,90 @@ import path from 'path';
 import { PRIMARY_SYNTHETIC_FEED } from '../data/syntheticFeed';
 import { SYNTHETIC_DIRECTORY_AGENTS } from '../data/syntheticDirectory';
 
-describe('A2A-UI-P1 Public Preview Readiness — Static Build & Security Verification', () => {
+describe('A2A-UI-P1-R1 Public Preview Routing & Security Qualification', () => {
   const distDir = path.resolve(__dirname, '../../dist');
 
-  it('verifies static build artifacts exist in dist/', () => {
-    // If dist does not exist yet in test runner, verify public templates
-    const publicHeaders = path.resolve(__dirname, '../../public/_headers');
-    const publicRoutes = path.resolve(__dirname, '../../public/_routes.json');
-    const public404 = path.resolve(__dirname, '../../public/404.html');
-
-    expect(fs.existsSync(publicHeaders)).toBe(true);
-    expect(fs.existsSync(publicRoutes)).toBe(true);
-    expect(fs.existsSync(public404)).toBe(true);
-
-    const headersContent = fs.readFileSync(publicHeaders, 'utf-8');
-    expect(headersContent).toContain("Content-Security-Policy: default-src 'self'");
-    expect(headersContent).toContain("X-Frame-Options: DENY");
-    expect(headersContent).toContain("X-Content-Type-Options: nosniff");
+  it('fails closed if production build output directory dist/ is missing', () => {
+    expect(
+      fs.existsSync(distDir),
+      'Production build directory dist/ must exist. Build must precede test execution.'
+    ).toBe(true);
   });
 
-  it('verifies static build bundle contains zero external telemetry or secret leaks', () => {
-    if (fs.existsSync(distDir)) {
-      const assetsDir = path.join(distDir, 'assets');
-      if (fs.existsSync(assetsDir)) {
-        const files = fs.readdirSync(assetsDir);
-        const jsFiles = files.filter((f) => f.endsWith('.js'));
-        expect(jsFiles.length).toBeGreaterThan(0);
+  it('verifies complete production build artifact inventory in dist/', () => {
+    const distIndex = path.join(distDir, 'index.html');
+    const distHeaders = path.join(distDir, '_headers');
+    const dist404 = path.join(distDir, '404.html');
+    const distRoutes = path.join(distDir, '_routes.json');
+    const distAssets = path.join(distDir, 'assets');
 
-        for (const jsFile of jsFiles) {
-          const content = fs.readFileSync(path.join(assetsDir, jsFile), 'utf-8');
+    expect(fs.existsSync(distIndex), 'dist/index.html must exist').toBe(true);
+    expect(fs.existsSync(distHeaders), 'dist/_headers must exist').toBe(true);
+    expect(fs.existsSync(dist404), 'dist/404.html must exist').toBe(true);
+    // _routes.json was removed because it is for Cloudflare Functions routing, not static SPA routing
+    expect(fs.existsSync(distRoutes), 'dist/_routes.json must NOT exist').toBe(false);
 
-          // Zero external telemetry beacons
-          expect(content).not.toContain('google-analytics.com');
-          expect(content).not.toContain('segment.io');
-          expect(content).not.toContain('api.mixpanel.com');
+    expect(fs.existsSync(distAssets), 'dist/assets directory must exist').toBe(true);
+    const assetFiles = fs.readdirSync(distAssets);
+    expect(assetFiles.some((f) => f.startsWith('blue-toby-') && f.endsWith('.png'))).toBe(true);
+    expect(assetFiles.some((f) => f.startsWith('index-') && f.endsWith('.js'))).toBe(true);
+    expect(assetFiles.some((f) => f.startsWith('index-') && f.endsWith('.css'))).toBe(true);
+  });
 
-          // Zero live OpenAI / Anthropic / GitHub token leaks
-          expect(content).not.toMatch(/sk-[a-zA-Z0-9]{20,}/);
-          expect(content).not.toMatch(/ghp_[a-zA-Z0-9]{20,}/);
-          expect(content).not.toMatch(/gho_[a-zA-Z0-9]{20,}/);
+  it('verifies relative asset paths and metadata in dist/index.html', () => {
+    const indexContent = fs.readFileSync(path.join(distDir, 'index.html'), 'utf-8');
 
-          // Zero unencrypted private keys
-          expect(content).not.toContain('BEGIN PRIVATE KEY');
-          expect(content).not.toContain('BEGIN RSA PRIVATE KEY');
-        }
-      }
+    // Title & meta description
+    expect(indexContent).toContain('ToadAid Agent Observatory — Public Preview');
+    expect(indexContent).toContain('ToadAid Sovereign Agent-to-Agent (A2A) Telemetry and Seam Governance');
+
+    // Relative asset references
+    expect(indexContent).toContain('src="./assets/');
+    expect(indexContent).toContain('href="./assets/');
+    expect(indexContent).toContain('href="./favicon.svg"');
+  });
+
+  it('verifies hardened security headers in dist/_headers', () => {
+    const headersContent = fs.readFileSync(path.join(distDir, '_headers'), 'utf-8');
+
+    expect(headersContent).toContain("Content-Security-Policy: default-src 'self'");
+    expect(headersContent).toContain("connect-src 'self'");
+    expect(headersContent).toContain("frame-ancestors 'none'");
+    expect(headersContent).toContain('X-Frame-Options: DENY');
+    expect(headersContent).toContain('X-Content-Type-Options: nosniff');
+    expect(headersContent).toContain('Referrer-Policy: strict-origin-when-cross-origin');
+    expect(headersContent).toContain('Cache-Control: public, max-age=31536000, immutable');
+  });
+
+  it('verifies static 404 fallback page contains return link to root', () => {
+    const fourOhFour = fs.readFileSync(path.join(distDir, '404.html'), 'utf-8');
+    expect(fourOhFour).toContain('404 — Route Not Found');
+    expect(fourOhFour).toContain('href="./"');
+  });
+
+  it('performs deterministic bundle scanning for known telemetry beacons and credentials', () => {
+    const assetsDir = path.join(distDir, 'assets');
+    const files = fs.readdirSync(assetsDir);
+    const jsFiles = files.filter((f) => f.endsWith('.js'));
+    expect(jsFiles.length).toBeGreaterThan(0);
+
+    for (const jsFile of jsFiles) {
+      const content = fs.readFileSync(path.join(assetsDir, jsFile), 'utf-8');
+
+      // Prohibited external telemetry domains
+      expect(content).not.toContain('google-analytics.com');
+      expect(content).not.toContain('segment.io');
+      expect(content).not.toContain('api.mixpanel.com');
+
+      // Prohibited live API base URLs
+      expect(content).not.toContain('api.openai.com');
+      expect(content).not.toContain('api.anthropic.com');
+
+      // Prohibited credential / token patterns
+      expect(content).not.toMatch(/sk-[a-zA-Z0-9]{20,}/);
+      expect(content).not.toMatch(/ghp_[a-zA-Z0-9]{20,}/);
+      expect(content).not.toMatch(/gho_[a-zA-Z0-9]{20,}/);
+      expect(content).not.toContain('BEGIN PRIVATE KEY');
     }
   });
 
@@ -71,11 +110,5 @@ describe('A2A-UI-P1 Public Preview Readiness — Static Build & Security Verific
       expect(agent.tenantRef).toMatch(/^tenant-/);
       expect(agent.ownerRef).toMatch(/^owner-/);
     }
-  });
-
-  it('verifies relative asset path configuration for portable hosting', () => {
-    const viteConfigPath = path.resolve(__dirname, '../../vite.config.ts');
-    const viteConfig = fs.readFileSync(viteConfigPath, 'utf-8');
-    expect(viteConfig).toContain('base: "./"');
   });
 });

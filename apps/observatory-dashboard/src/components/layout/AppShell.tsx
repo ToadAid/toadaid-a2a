@@ -105,7 +105,7 @@ export const AppShell: React.FC = () => {
           </div>
 
           <div className="text-[var(--color-text-dim)]">
-            Local Synthetic Engine · Not Deployed
+            Synthetic Preview · No Live Agents · Zero Execution Authority
           </div>
         </div>
       </footer>

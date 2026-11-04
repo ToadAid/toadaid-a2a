@@ -35,9 +35,9 @@ jobs:
       - name: Install dependencies from the committed lockfile
         working-directory: apps/observatory-dashboard
         run: npm ci
-      - name: Run frontend privacy and accessibility tests
-        working-directory: apps/observatory-dashboard
-        run: npm test
       - name: Run production build
         working-directory: apps/observatory-dashboard
         run: npm run build
+      - name: Run frontend privacy and accessibility tests
+        working-directory: apps/observatory-dashboard
+        run: npm test
