@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, { createContext, useContext, useEffect, useLayoutEffect, useState } from "react";
 import type { ThemeMode } from "../types/observatory";
 
 interface ThemeContextType {
@@ -22,8 +22,13 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
   });
 
-  useEffect(() => {
+  // Theme tokens must be present before the committed controls can paint.
+  useLayoutEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
+  }, [theme]);
+
+  // Preference persistence is not paint-critical.
+  useEffect(() => {
     try {
       localStorage.setItem("toadaid_theme", theme);
     } catch {
