@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 from observatory.model import canonical_json
 ROOT = Path(__file__).resolve().parents[1]
 HEADERS = {'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'", 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'no-referrer', 'Permissions-Policy': 'accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()', 'Cross-Origin-Resource-Policy': 'same-origin'}
-TYPES = {'.html': 'text/html; charset=utf-8', '.md': 'text/markdown; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2'}
+TYPES = {'.html': 'text/html; charset=utf-8', '.md': 'text/markdown; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.webp': 'image/webp', '.woff2': 'font/woff2'}
 
 def digest(data):
     return sha256(data).hexdigest()
@@ -43,13 +43,16 @@ def assemble(output: Path, dashboard: Path, release_id: str):
     home = ROOT / 'apps/agent-hub/public'
     toby = (ROOT / 'apps/observatory-dashboard/src/assets/keepers/blue-toby.png').read_bytes()
     css = (home / 'pond.css').read_bytes()
+    grove = (home / 'living-grove.webp').read_bytes()
     built_toby = list((dashboard / 'assets').glob('blue-toby-*.png'))
     if len(built_toby) != 1 or digest(built_toby[0].read_bytes()) != digest(toby):
         raise ValueError('Authentic Blue Toby build mismatch')
     toby_route = '/dashboard/assets/' + built_toby[0].name
     css_route = '/assets/pond-' + digest(css)[:16] + '.css'
     publish(css_route, css)
-    index = (home / 'index.html').read_text().replace('{{TOBY_ASSET}}', toby_route).replace('{{POND_CSS}}', css_route)
+    grove_route = '/assets/living-grove-' + digest(grove)[:16] + '.webp'
+    publish(grove_route, grove)
+    index = (home / 'index.html').read_text().replace('{{TOBY_ASSET}}', toby_route).replace('{{POND_CSS}}', css_route).replace('{{GROVE_ASSET}}', grove_route)
     if '{{' in index:
         raise ValueError('Unresolved public asset reference')
     publish('/index.html', index.encode())

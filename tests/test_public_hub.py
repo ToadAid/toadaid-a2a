@@ -31,6 +31,7 @@ class PublicHubTests(unittest.TestCase):
         (dashboard / '404.html').write_text('obsolete dashboard fallback')
         cls.output = cls.base / 'release'
         cls.manifest = assemble(cls.output, dashboard, 'agent-hub-unit-fixture')
+        cls.grove_route = next(route for route in cls.manifest['routes'] if route.startswith('/assets/living-grove-'))
         cls.sha = digest((cls.output / 'release-manifest.json').read_bytes())
         cls.server = make_server(cls.output, cls.sha, allow_preview=True)
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
@@ -57,13 +58,15 @@ class PublicHubTests(unittest.TestCase):
         self.assertNotIn(b'<!doctype', self.request('/pond/guide.md')[2])
 
     def test_actual_headers_cover_html_markdown_js_css_images_and_errors(self):
-        paths = ['/', '/pond/guide.md', '/dashboard/assets/index-12345678.js', '/dashboard/assets/index-12345678.css', '/dashboard/assets/blue-toby-12345678.png', '/favicon.svg', '/missing']
+        paths = ['/', '/pond/guide.md', self.grove_route, '/dashboard/assets/index-12345678.js', '/dashboard/assets/index-12345678.css', '/dashboard/assets/blue-toby-12345678.png', '/favicon.svg', '/missing']
         for path in paths:
             _, headers, _ = self.request(path)
             for key, value in HEADERS.items(): self.assertEqual(headers[key], value, (path, key))
         self.assertEqual(self.request('/dashboard/assets/index-12345678.js')[1]['Content-Type'], 'text/javascript; charset=utf-8')
         self.assertIn('immutable', self.request('/dashboard/assets/index-12345678.js')[1]['Cache-Control'])
         self.assertEqual(self.request('/')[1]['Cache-Control'], 'no-store')
+        self.assertEqual(self.request(self.grove_route)[1]['Content-Type'], 'image/webp')
+        self.assertIn('immutable', self.request(self.grove_route)[1]['Cache-Control'])
 
     def test_no_spa_fallback_for_unknown_private_or_protocol_paths(self):
         for path in ['/missing/deep/', '/dashboard/missing/', '/dashboard/_headers', '/.well-known/agent-card.json', '/pond/apply', '/api/agents', '/.git/config', '/.env', '/release-manifest.json', '/runtime/public_hub.py']:
@@ -107,6 +110,8 @@ class PublicHubTests(unittest.TestCase):
         self.assertTrue(self.manifest['syntheticOnly'])
         self.assertTrue(all(value is False for value in self.manifest['authorityFlags'].values()))
         self.assertEqual(self.manifest['blueTobySourceSha256'], digest((ROOT / 'apps/observatory-dashboard/src/assets/keepers/blue-toby.png').read_bytes()))
+        self.assertEqual(self.manifest['routes'][self.grove_route]['sha256'], '7421abcd531b2ed60c5251ca17bcfe6f585c75d3b2fb53698cd3b965b455f6e9')
+        self.assertEqual(self.request(self.grove_route)[2], (ROOT / 'apps/agent-hub/public/living-grove.webp').read_bytes())
         self.assertNotIn('/dashboard/_headers', self.manifest['routes'])
         self.assertNotIn('/dashboard/404.html', self.manifest['routes'])
         with self.assertRaises(ValueError): assemble(self.output, self.base / 'dashboard-build', 'overwrite-is-forbidden')

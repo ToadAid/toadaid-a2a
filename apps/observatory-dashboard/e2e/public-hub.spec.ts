@@ -16,6 +16,10 @@ test('home is responsive, keyboard accessible and links to the complete journey'
  const unexpected:string[]=[];page.on('request',request=>{if(new URL(request.url()).origin!==new URL(info.project.use.baseURL as string??'http://127.0.0.1:4389').origin)unexpected.push(request.url());});
  await page.goto('/');await expect(page.getByRole('heading',{level:1})).toContainText('Human sovereignty.');
  await expect(page.getByRole('img',{name:/Authentic Blue Toby/})).toBeVisible();
+ const grove=page.getByRole('img',{name:/Living Grove landscape/});await expect(grove).toBeVisible();
+ expect(await grove.evaluate((img:HTMLImageElement)=>img.complete&&img.naturalWidth>0)).toBe(true);
+ expect(await page.locator('.hero .toby').count()).toBe(0);
+ await expect(page.locator('.brand').first().getByRole('img',{name:/Authentic Blue Toby/})).toBeVisible();
  const hero=page.getByRole('region',{name:/One pond/});
  await expect(hero.getByRole('link',{name:/Visit ToadAid Portal/})).toHaveAttribute('href','https://portal.toadaid.org/');
  await expect(hero.getByRole('link',{name:/Explore A2A architecture/})).toHaveAttribute('href','https://portal.toadaid.org/a2a/');
@@ -23,9 +27,9 @@ test('home is responsive, keyboard accessible and links to the complete journey'
  await expect(page.getByRole('link',{name:/Read participation guide/})).toHaveAttribute('href','/pond/guide.md');
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
  await page.keyboard.press('Tab');await expect(page.getByRole('link',{name:'Skip to content'})).toBeFocused();
- if((info.project.use.viewport?.width??1440)<=720){await page.getByText('Explore the pond',{exact:true}).click();await expect(page.getByRole('navigation',{name:'Mobile'})).toBeVisible();await page.screenshot({path:`/tmp/agent-door-home-menu-${info.project.name}.png`,fullPage:false});}
+ if((info.project.use.viewport?.width??1440)<=720){await page.getByText('Explore the pond',{exact:true}).click();await expect(page.getByRole('navigation',{name:'Mobile'})).toBeVisible();await page.screenshot({path:`/tmp/agent-lore-hero-home-menu-${info.project.name}.png`,fullPage:false});}
  const axe=await new AxeBuilder({page}).analyze();expect(axe.violations.filter(v=>['serious','critical'].includes(v.impact??''))).toEqual([]);
- await page.screenshot({path:`/tmp/agent-door-home-${info.project.name}.png`,fullPage:true});expect(unexpected).toEqual([]);
+ await page.screenshot({path:`/tmp/agent-lore-hero-home-${info.project.name}.png`,fullPage:true});expect(unexpected).toEqual([]);
 });
 
 test('all five synthetic views survive direct links, refresh, history and return navigation',async({page},info)=>{
@@ -42,8 +46,8 @@ test('all five synthetic views survive direct links, refresh, history and return
  await page.getByRole('navigation',{name:'Agent Pond destinations'}).getByRole('link',{name:/Agent Pond/}).click();await expect(page.getByRole('heading',{level:1})).toContainText('One pond.');
  await page.goto('/dashboard/?view=security');expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
  const axe=await new AxeBuilder({page}).analyze();expect(axe.violations.filter(v=>['serious','critical'].includes(v.impact??''))).toEqual([]);
- await page.screenshot({path:`/tmp/agent-door-observatory-${info.project.name}.png`,fullPage:true});
- if(!desktop){await page.getByRole('button',{name:'Open all 5 views menu'}).click();await page.screenshot({path:`/tmp/agent-door-observatory-menu-${info.project.name}.png`,fullPage:false});}
+ await page.screenshot({path:`/tmp/agent-lore-hero-observatory-${info.project.name}.png`,fullPage:true});
+ if(!desktop){await page.getByRole('button',{name:'Open all 5 views menu'}).click();await page.screenshot({path:`/tmp/agent-lore-hero-observatory-menu-${info.project.name}.png`,fullPage:false});}
  expect(errors).toEqual([]);
 });
 
