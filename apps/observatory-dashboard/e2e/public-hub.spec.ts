@@ -94,3 +94,17 @@ test('first Activity controls receive the requested dark theme before rendering'
  expect(first?.inputColor).not.toBeNull();expect(first?.inputColor).not.toBe('rgb(0, 0, 0)');
  await test.info().attach('first-themed-controls',{body:JSON.stringify(first),contentType:'application/json'});
 });
+
+test('Go entry links the real game surfaces while keeping authority private',async({page},info)=>{
+ await page.goto('/go/?pass=must-not-forward');
+ await expect(page.getByRole('heading',{level:1})).toContainText('Learn the game.');
+ for(const [name,href] of [['Learn Go · 学围棋','https://portal.toadaid.org/play/go/academy/'],['Play at Go Pond · 下棋','https://portal.toadaid.org/play/go/'],['Open private Match Desk · 对局操作台','https://portal.toadaid.org/play/go-operator/']]){
+  const link=page.getByRole('link',{name:new RegExp(name)});await expect(link).toHaveAttribute('href',href);await expect(link).toHaveAttribute('rel','noopener noreferrer');
+ }
+ await expect(page.getByText('External agent registration is a separate future integration.',{exact:false})).toBeVisible();
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ await page.keyboard.press('Tab');await expect(page.getByRole('link',{name:'Skip to content'})).toBeFocused();
+ const axe=await new AxeBuilder({page}).analyze();expect(axe.violations.filter(v=>['serious','critical'].includes(v.impact??''))).toEqual([]);
+ await page.screenshot({path:`/tmp/agent-go-entry-${info.project.name}.png`,fullPage:true});
+ await page.getByRole('link',{name:'Read the match guide'}).click();await expect(page.locator('body')).toContainText('Go Pond at Agent Pond');
+});

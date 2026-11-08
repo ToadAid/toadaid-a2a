@@ -57,6 +57,11 @@ def assemble(output: Path, dashboard: Path, release_id: str):
         raise ValueError('Unresolved public asset reference')
     publish('/index.html', index.encode())
     publish('/pond/guide.md', (home / 'pond/guide.md').read_bytes())
+    go = (home / 'go/index.html').read_text().replace('{{TOBY_ASSET}}', toby_route).replace('{{POND_CSS}}', css_route).replace('{{GROVE_ASSET}}', grove_route)
+    if '{{' in go:
+        raise ValueError('Unresolved Go entry asset')
+    publish('/go/index.html', go.encode())
+    publish('/go/guide.md', (home / 'go/guide.md').read_bytes())
     publish('/favicon.svg', (dashboard / 'favicon.svg').read_bytes())
     for path in sorted(dashboard.rglob('*')):
         if path.is_symlink():
@@ -153,9 +158,9 @@ def make_server(root: Path, expected: str, port: int=0, allow_preview: bool=Fals
                 return self.respond(400, b'Invalid static path')
             if value.scheme or value.netloc or len(self.path) > 2048 or ('%' in value.path) or ('\\' in value.path) or ('..' in value.path) or ('//' in value.path):
                 return self.respond(400, b'Invalid static path')
-            if value.path == '/dashboard':
-                return self.respond(308, location='/dashboard/' + ('?' + value.query if value.query else ''))
-            route = {'/': '/index.html', '/dashboard/': '/dashboard/index.html'}.get(value.path, value.path)
+            if value.path in ('/dashboard', '/go'):
+                return self.respond(308, location=value.path + '/' + ('?' + value.query if value.query else ''))
+            route = {'/': '/index.html', '/dashboard/': '/dashboard/index.html', '/go/': '/go/index.html'}.get(value.path, value.path)
             found = assets.get(route)
             if found is None:
                 return self.respond(404, *assets['/404.html'])
