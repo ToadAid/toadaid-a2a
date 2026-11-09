@@ -19,7 +19,7 @@ import hashlib
 import json
 import time
 
-MAX_ENVELOPE_BYTES = 131072  # 128KB ceiling unless session restricts further
+MAX_ENVELOPE_BYTES = 131072  # 128KB absolute ceiling
 MAX_STRING_LENGTH = 1024
 
 
@@ -47,6 +47,21 @@ def _pin_identifier(value, limit=MAX_STRING_LENGTH):
         raise EnvelopeRefusal("INVALID_IDENTIFIER")
 
 
+def _json_no_duplicates(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise EnvelopeRefusal("DUPLICATE_JSON_KEY")
+        result[key] = value
+    return result
+
+
+def _require_int(value, code):
+    if type(value) is not int:
+        raise EnvelopeRefusal(code)
+    return value
+
+
 def validate_envelope(
     envelope_raw: bytes,
     session_manifest: dict,
@@ -67,11 +82,26 @@ def validate_envelope(
     if not isinstance(envelope_raw, bytes):
         raise EnvelopeRefusal("ENVELOPE_MUST_BE_BYTES")
 
-    if len(envelope_raw) > session_manifest.get("maxMessageBytes", MAX_ENVELOPE_BYTES):
+    # Size Enforcement
+    session_limit = session_manifest.get("maxMessageBytes")
+    if session_limit is not None:
+        if type(session_limit) is not int or session_limit <= 0:
+            raise EnvelopeRefusal("INVALID_SIZE_CONFIGURATION")
+        limit = min(session_limit, MAX_ENVELOPE_BYTES)
+    else:
+        limit = MAX_ENVELOPE_BYTES
+
+    if len(envelope_raw) > limit:
         raise EnvelopeRefusal("ENVELOPE_EXCEEDS_SIZE_LIMIT")
 
     try:
-        envelope = json.loads(envelope_raw.decode("utf-8"))
+        envelope = json.loads(
+            envelope_raw.decode("utf-8"),
+            object_pairs_hook=_json_no_duplicates,
+            parse_constant=lambda _: (_ for _ in ()).throw(EnvelopeRefusal("NON_FINITE_NUMBER"))
+        )
+    except EnvelopeRefusal:
+        raise
     except (UnicodeDecodeError, json.JSONDecodeError) as e:
         raise EnvelopeRefusal("INVALID_JSON") from e
 
@@ -119,12 +149,14 @@ def validate_envelope(
     if recipient_id not in participants:
         raise EnvelopeRefusal("RECIPIENT_NOT_PARTICIPANT")
 
-    # 4. Time Bounds
-    created_at = metadata.get("createdAt")
-    expires_at = metadata.get("expiresAt")
+    expected_policy_hash = session_manifest.get("sessionPolicyHash")
+    if expected_policy_hash is not None:
+        if metadata.get("sessionPolicyHash") != expected_policy_hash:
+            raise EnvelopeRefusal("SESSION_POLICY_HASH_MISMATCH")
 
-    if not isinstance(created_at, int) or not isinstance(expires_at, int):
-        raise EnvelopeRefusal("INVALID_TIMESTAMPS")
+    # 4. Time Bounds
+    created_at = _require_int(metadata.get("createdAt"), "INVALID_TIMESTAMPS")
+    expires_at = _require_int(metadata.get("expiresAt"), "INVALID_TIMESTAMPS")
 
     if created_at > expires_at:
         raise EnvelopeRefusal("CREATED_AFTER_EXPIRY")
@@ -138,14 +170,16 @@ def validate_envelope(
 
     # 5. Cryptographic Integrity
     content_parts = envelope.get("contentParts")
-    expected_payload_hash = _hash_payload(content_parts)
+    if not isinstance(content_parts, (dict, list)):
+        raise EnvelopeRefusal("INVALID_CONTENT_PARTS_STRUCTURE")
 
+    expected_payload_hash = _hash_payload(content_parts)
     if metadata.get("payloadHash") != expected_payload_hash:
         raise EnvelopeRefusal("PAYLOAD_HASH_MISMATCH")
 
-    # 6. Sequence and Replay (Memory-based)
-    seq = metadata.get("sequence")
-    if not isinstance(seq, int) or seq <= 0:
+    # 6. Sequence and Replay Checks
+    seq = _require_int(metadata.get("sequence"), "INVALID_SEQUENCE")
+    if seq <= 0:
         raise EnvelopeRefusal("INVALID_SEQUENCE")
 
     if seq > session_manifest.get("maxTurns", 0):
@@ -174,6 +208,21 @@ def validate_envelope(
 
     if not trusted_signature_verifier(metadata, signature, sender_id):
         raise EnvelopeRefusal("INVALID_SIGNATURE")
+
+    # 8. Check-and-Record (State Mutation)
+    # Fail fast if another caller advanced sequence or inserted id while we authenticated
+    if session_manifest.get("currentSequence", 0) != seq - 1:
+        raise EnvelopeRefusal("CONCURRENT_SEQUENCE_ADVANCE")
+
+    seen_ids_ref = session_manifest.setdefault("seenMessageIds", {})
+    if message_id in seen_ids_ref:
+        if seen_ids_ref[message_id] == env_hash:
+            raise EnvelopeRefusal("IDEMPOTENT_REPLAY")
+        raise EnvelopeRefusal("CONFLICTING_REPLAY")
+
+    # Record accepted message and advance sequence exactly once
+    session_manifest["currentSequence"] = seq
+    seen_ids_ref[message_id] = env_hash
 
     return {
         "status": "VALIDATED",

@@ -6,13 +6,11 @@ from agent_web.envelope import (
 )
 
 
-def dummy_signature_verifier(metadata, signature, sender_id):
-    """Synthetic offline signature verifier for testing structural constraints."""
-    if signature == "invalid_sig":
-        return False
-    if sender_id == "unauthorized_agent":
-        return False
-    return True
+def mock_trust_framework_verifier(metadata, signature, sender_id):
+    """Synthetic offline verifier asserting trusted adapter boundary."""
+    if signature == "trusted_valid_adapter_sig":
+        return True
+    return False
 
 
 class TestA2AEnvelopeEngine(unittest.TestCase):
@@ -36,7 +34,8 @@ class TestA2AEnvelopeEngine(unittest.TestCase):
         if overrides and "contentParts" in overrides:
             content_parts = overrides["contentParts"]
             
-        payload_hash = _hash_payload(content_parts)
+        # Hash must match the injected content otherwise it's tampered
+        payload_hash = _hash_payload(content_parts) if not isinstance(content_parts, bytes) else "dummy_hash"
         
         metadata = {
             "protocolVersion": "a2a-p1a-v0",
@@ -48,19 +47,16 @@ class TestA2AEnvelopeEngine(unittest.TestCase):
             "kind": "TURN",
             "createdAt": self.current_time_ms - 1000,
             "expiresAt": self.current_time_ms + 10000,
-            "sessionPolicyHash": "dummy-policy",
             "payloadHash": payload_hash
         }
+        
         if meta_overrides:
             metadata.update(meta_overrides)
-            if "contentParts" in overrides if overrides else False:
-                # If content parts were overridden but not payloadHash, make sure payloadHash matches unless intentionally tampered
-                pass
             
         env = {
             "metadata": metadata,
             "contentParts": content_parts,
-            "signature": "dummy_valid_sig",
+            "signature": "trusted_valid_adapter_sig",
             "authoritySource": "NONE",
             "executionEligible": False
         }
@@ -69,87 +65,142 @@ class TestA2AEnvelopeEngine(unittest.TestCase):
             
         return _canonical_json(env)
 
-    def test_valid_envelope_acceptance(self):
-        env_bytes = self.create_envelope()
-        result = validate_envelope(env_bytes, self.session, dummy_signature_verifier, self.current_time_ms)
-        self.assertEqual(result["status"], "VALIDATED")
-        self.assertFalse(result["deliverable"])
-        self.assertEqual(result["envelope"]["metadata"]["messageId"], "msg-1")
+    def test_valid_envelope_acceptance_and_state_advance(self):
+        env1_bytes = self.create_envelope(meta_overrides={"messageId": "msg-1", "sequence": 1})
+        res1 = validate_envelope(env1_bytes, self.session, mock_trust_framework_verifier, self.current_time_ms)
+        self.assertEqual(res1["status"], "VALIDATED")
+        self.assertFalse(res1["deliverable"])
+        self.assertEqual(self.session["currentSequence"], 1)
+        self.assertIn("msg-1", self.session["seenMessageIds"])
+        
+        env2_bytes = self.create_envelope(meta_overrides={"messageId": "msg-2", "sequence": 2})
+        res2 = validate_envelope(env2_bytes, self.session, mock_trust_framework_verifier, self.current_time_ms)
+        self.assertEqual(res2["status"], "VALIDATED")
+        self.assertEqual(self.session["currentSequence"], 2)
+        self.assertIn("msg-2", self.session["seenMessageIds"])
+
+    def test_auth_failure_not_recorded(self):
+        env_raw = self.create_envelope(overrides={"signature": "bad_signature"})
+        with self.assertRaisesRegex(EnvelopeRefusal, "INVALID_SIGNATURE"):
+            validate_envelope(env_raw, self.session, mock_trust_framework_verifier, self.current_time_ms)
+            
+        self.assertEqual(self.session["currentSequence"], 0)
+        self.assertNotIn("msg-1", self.session.get("seenMessageIds", {}))
+
+    def test_invalid_size_configuration(self):
+        self.session["maxMessageBytes"] = "not_an_int"
+        env = self.create_envelope()
+        with self.assertRaisesRegex(EnvelopeRefusal, "INVALID_SIZE_CONFIGURATION"):
+            validate_envelope(env, self.session, mock_trust_framework_verifier, self.current_time_ms)
+            
+        self.session["maxMessageBytes"] = -10
+        with self.assertRaisesRegex(EnvelopeRefusal, "INVALID_SIZE_CONFIGURATION"):
+            validate_envelope(env, self.session, mock_trust_framework_verifier, self.current_time_ms)
+
+        # Allow valid session configuration above ceiling, but enforce 128KB limit anyway
+        self.session["maxMessageBytes"] = 200000 
+        big_text = "A" * 150000
+        env_big = self.create_envelope(overrides={"contentParts": {"text": big_text}})
+        with self.assertRaisesRegex(EnvelopeRefusal, "ENVELOPE_EXCEEDS_SIZE_LIMIT"):
+            validate_envelope(env_big, self.session, mock_trust_framework_verifier, self.current_time_ms)
+
+    def test_reject_duplicate_json_keys(self):
+        env_str = self.create_envelope()
+        # Directly manipulate bytes to insert duplicate top-level key
+        tampered_str = env_str.decode('utf-8').replace('}', ',"authoritySource":"DUPLICATE"}').encode('utf-8')
+        with self.assertRaisesRegex(EnvelopeRefusal, "DUPLICATE_JSON_KEY"):
+            validate_envelope(tampered_str, self.session, mock_trust_framework_verifier, self.current_time_ms)
+
+    def test_reject_non_finite_numbers(self):
+        env_str = self.create_envelope().decode('utf-8')
+        tampered_str = env_str.replace('"sequence":1', '"sequence":NaN').encode('utf-8')
+        with self.assertRaisesRegex(EnvelopeRefusal, "NON_FINITE_NUMBER"):
+            validate_envelope(tampered_str, self.session, mock_trust_framework_verifier, self.current_time_ms)
+
+    def test_reject_boolean_in_int_fields(self):
+        env1 = self.create_envelope(meta_overrides={"sequence": True})
+        with self.assertRaisesRegex(EnvelopeRefusal, "INVALID_SEQUENCE"):
+            validate_envelope(env1, self.session, mock_trust_framework_verifier, self.current_time_ms)
+            
+        env2 = self.create_envelope(meta_overrides={"createdAt": False})
+        with self.assertRaisesRegex(EnvelopeRefusal, "INVALID_TIMESTAMPS"):
+            validate_envelope(env2, self.session, mock_trust_framework_verifier, self.current_time_ms)
+
+    def test_session_policy_hash_mismatch(self):
+        self.session["sessionPolicyHash"] = "expected-policy"
+        env1 = self.create_envelope(meta_overrides={"sessionPolicyHash": "different-policy"})
+        with self.assertRaisesRegex(EnvelopeRefusal, "SESSION_POLICY_HASH_MISMATCH"):
+            validate_envelope(env1, self.session, mock_trust_framework_verifier, self.current_time_ms)
+            
+        env2 = self.create_envelope(meta_overrides={"sessionPolicyHash": "expected-policy"})
+        res = validate_envelope(env2, self.session, mock_trust_framework_verifier, self.current_time_ms)
+        self.assertEqual(res["status"], "VALIDATED")
+
+    def test_content_parts_structure(self):
+        env1 = self.create_envelope(overrides={"contentParts": "just a string"})
+        with self.assertRaisesRegex(EnvelopeRefusal, "INVALID_CONTENT_PARTS_STRUCTURE"):
+            validate_envelope(env1, self.session, mock_trust_framework_verifier, self.current_time_ms)
+
+        env2 = self.create_envelope(overrides={"contentParts": {"valid": "structure"}})
+        res = validate_envelope(env2, self.session, mock_trust_framework_verifier, self.current_time_ms)
+        self.assertEqual(res["status"], "VALIDATED")
 
     def test_reject_execution_authority_escalation(self):
         env1 = self.create_envelope(overrides={"authoritySource": "AGENT"})
         with self.assertRaisesRegex(EnvelopeRefusal, "AUTHORITY_SOURCE_MUST_BE_NONE"):
-            validate_envelope(env1, self.session, dummy_signature_verifier, self.current_time_ms)
+            validate_envelope(env1, self.session, mock_trust_framework_verifier, self.current_time_ms)
             
         env2 = self.create_envelope(overrides={"executionEligible": True})
         with self.assertRaisesRegex(EnvelopeRefusal, "EXECUTION_ELIGIBLE_MUST_BE_FALSE"):
-            validate_envelope(env2, self.session, dummy_signature_verifier, self.current_time_ms)
+            validate_envelope(env2, self.session, mock_trust_framework_verifier, self.current_time_ms)
 
     def test_reject_payload_tampering(self):
         env_raw = self.create_envelope()
         env_dict = json.loads(env_raw)
-        # Tamper without updating the hash in metadata
         env_dict["contentParts"] = {"text": "Tampered!"} 
         
         with self.assertRaisesRegex(EnvelopeRefusal, "PAYLOAD_HASH_MISMATCH"):
-            validate_envelope(_canonical_json(env_dict), self.session, dummy_signature_verifier, self.current_time_ms)
-
-    def test_reject_invalid_authentication(self):
-        env_raw = self.create_envelope(overrides={"signature": "invalid_sig"})
-        with self.assertRaisesRegex(EnvelopeRefusal, "INVALID_SIGNATURE"):
-            validate_envelope(env_raw, self.session, dummy_signature_verifier, self.current_time_ms)
+            validate_envelope(_canonical_json(env_dict), self.session, mock_trust_framework_verifier, self.current_time_ms)
 
     def test_wrong_sender_session(self):
         env1 = self.create_envelope(meta_overrides={"senderAgentId": "agent-c"})
         with self.assertRaisesRegex(EnvelopeRefusal, "SENDER_NOT_PARTICIPANT"):
-            validate_envelope(env1, self.session, dummy_signature_verifier, self.current_time_ms)
+            validate_envelope(env1, self.session, mock_trust_framework_verifier, self.current_time_ms)
             
         env2 = self.create_envelope(meta_overrides={"sessionId": "other-session"})
         with self.assertRaisesRegex(EnvelopeRefusal, "SESSION_ID_MISMATCH"):
-            validate_envelope(env2, self.session, dummy_signature_verifier, self.current_time_ms)
+            validate_envelope(env2, self.session, mock_trust_framework_verifier, self.current_time_ms)
 
     def test_duplicate_message_idempotent_and_conflicting(self):
         env_raw = self.create_envelope()
         env_dict = json.loads(env_raw)
         meta_hash = _hash_metadata(env_dict["metadata"])
         
-        # Idempotent replay
+        # Manually seed the replay dictionary to test early check logic
         self.session["seenMessageIds"] = {"msg-1": meta_hash}
         with self.assertRaisesRegex(EnvelopeRefusal, "IDEMPOTENT_REPLAY"):
-            validate_envelope(env_raw, self.session, dummy_signature_verifier, self.current_time_ms)
+            validate_envelope(env_raw, self.session, mock_trust_framework_verifier, self.current_time_ms)
             
-        # Conflicting replay
         self.session["seenMessageIds"] = {"msg-1": "some-other-hash"}
         with self.assertRaisesRegex(EnvelopeRefusal, "CONFLICTING_REPLAY"):
-            validate_envelope(env_raw, self.session, dummy_signature_verifier, self.current_time_ms)
+            validate_envelope(env_raw, self.session, mock_trust_framework_verifier, self.current_time_ms)
 
     def test_out_of_order_sequence(self):
         env_raw = self.create_envelope(meta_overrides={"sequence": 2})
         with self.assertRaisesRegex(EnvelopeRefusal, "OUT_OF_ORDER_SEQUENCE"):
-            validate_envelope(env_raw, self.session, dummy_signature_verifier, self.current_time_ms)
+            validate_envelope(env_raw, self.session, mock_trust_framework_verifier, self.current_time_ms)
 
     def test_expired_and_future_dated(self):
-        # Expired Message
         env1 = self.create_envelope(meta_overrides={"expiresAt": self.current_time_ms - 100})
         with self.assertRaisesRegex(EnvelopeRefusal, "MESSAGE_EXPIRED"):
-            validate_envelope(env1, self.session, dummy_signature_verifier, self.current_time_ms)
+            validate_envelope(env1, self.session, mock_trust_framework_verifier, self.current_time_ms)
             
-        # Future Message (Clock Skew)
         env2 = self.create_envelope(meta_overrides={
             "createdAt": self.current_time_ms + 61000,
             "expiresAt": self.current_time_ms + 100000
         })
         with self.assertRaisesRegex(EnvelopeRefusal, "MESSAGE_FROM_FUTURE"):
-            validate_envelope(env2, self.session, dummy_signature_verifier, self.current_time_ms)
-
-    def test_oversized_input(self):
-        big_text = "A" * 9000
-        env_raw = self.create_envelope(
-            overrides={"contentParts": {"text": big_text}},
-            meta_overrides={"payloadHash": _hash_payload({"text": big_text})}
-        )
-        with self.assertRaisesRegex(EnvelopeRefusal, "ENVELOPE_EXCEEDS_SIZE_LIMIT"):
-            validate_envelope(env_raw, self.session, dummy_signature_verifier, self.current_time_ms)
+            validate_envelope(env2, self.session, mock_trust_framework_verifier, self.current_time_ms)
 
     def test_no_trusted_verifier(self):
         env_raw = self.create_envelope()
