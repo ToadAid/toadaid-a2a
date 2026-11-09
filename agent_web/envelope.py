@@ -210,19 +210,25 @@ def validate_envelope(
         raise EnvelopeRefusal("INVALID_SIGNATURE")
 
     # 8. Check-and-Record (State Mutation)
-    # Fail fast if another caller advanced sequence or inserted id while we authenticated
-    if session_manifest.get("currentSequence", 0) != seq - 1:
-        raise EnvelopeRefusal("CONCURRENT_SEQUENCE_ADVANCE")
-
-    seen_ids_ref = session_manifest.setdefault("seenMessageIds", {})
-    if message_id in seen_ids_ref:
-        if seen_ids_ref[message_id] == env_hash:
-            raise EnvelopeRefusal("IDEMPOTENT_REPLAY")
-        raise EnvelopeRefusal("CONFLICTING_REPLAY")
-
-    # Record accepted message and advance sequence exactly once
-    session_manifest["currentSequence"] = seq
-    seen_ids_ref[message_id] = env_hash
+    import threading
+    
+    # Process-local thread synchronization; durable process/restart safety requires persistence.
+    session_lock = session_manifest.setdefault("_lock", threading.Lock())
+    
+    with session_lock:
+        # Fail fast if another caller advanced sequence or inserted id while we authenticated
+        if session_manifest.get("currentSequence", 0) != seq - 1:
+            raise EnvelopeRefusal("CONCURRENT_SEQUENCE_ADVANCE")
+    
+        seen_ids_ref = session_manifest.setdefault("seenMessageIds", {})
+        if message_id in seen_ids_ref:
+            if seen_ids_ref[message_id] == env_hash:
+                raise EnvelopeRefusal("IDEMPOTENT_REPLAY")
+            raise EnvelopeRefusal("CONFLICTING_REPLAY")
+    
+        # Record accepted message and advance sequence exactly once
+        session_manifest["currentSequence"] = seq
+        seen_ids_ref[message_id] = env_hash
 
     return {
         "status": "VALIDATED",

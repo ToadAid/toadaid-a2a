@@ -1,3 +1,5 @@
+import concurrent.futures
+import threading
 import json
 import unittest
 
@@ -207,6 +209,37 @@ class TestA2AEnvelopeEngine(unittest.TestCase):
         with self.assertRaisesRegex(EnvelopeRefusal, "TRUSTED_SIGNATURE_VERIFIER_REQUIRED"):
             validate_envelope(env_raw, self.session, None, self.current_time_ms)
 
+    def test_concurrent_replay_race_condition(self):
+        env_bytes = self.create_envelope(meta_overrides={"messageId": "msg-1", "sequence": 1})
+        
+        barrier = threading.Barrier(2)
+        
+        def racin_validator():
+            barrier.wait(timeout=2)
+            try:
+                return validate_envelope(env_bytes, self.session, mock_trust_framework_verifier, self.current_time_ms)
+            except EnvelopeRefusal as e:
+                return e
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            future1 = executor.submit(racin_validator)
+            future2 = executor.submit(racin_validator)
+            
+            res1 = future1.result()
+            res2 = future2.result()
+            
+        results = [res1, res2]
+        
+        successes = [r for r in results if isinstance(r, dict) and r.get("status") == "VALIDATED"]
+        failures = [r for r in results if isinstance(r, Exception)]
+        
+        # Exactly one should succeed and exactly one should fail
+        # Depending on thread timing, the loser hits either IDEMPOTENT_REPLAY or OUT_OF_ORDER_SEQUENCE
+        self.assertEqual(len(successes), 1)
+        self.assertEqual(len(failures), 1)
+        err_str = str(failures[0])
+        self.assertTrue("IDEMPOTENT_REPLAY" in err_str or "OUT_OF_ORDER_SEQUENCE" in err_str or "CONCURRENT_SEQUENCE_ADVANCE" in err_str)
+        self.assertEqual(self.session["currentSequence"], 1)
 
 if __name__ == "__main__":
     unittest.main()
