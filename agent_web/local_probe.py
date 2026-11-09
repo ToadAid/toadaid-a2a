@@ -70,6 +70,7 @@ from admission.gate import (
 )
 from admission.lifecycle import synthetic_lifecycle_source
 from observatory.model import ObservatoryRefusal
+from agent_web.conversation import CONVERSATION_HANDLERS
 import datetime
 
 # Opaque synthetic caller credentials — fixtures, NOT real identities.
@@ -209,6 +210,33 @@ def _request_parts(request):
     return message_id, None
 
 
+def _extract_conversation_text(content_parts):
+    """Extract and strictly validate text part when a conversation handler is active.
+
+    Requires an appropriately bounded string text part.
+    Rejects null, numeric, boolean, list, empty, and other non-string text values.
+    """
+    raw_text = None
+    if isinstance(content_parts, dict):
+        if "text" not in content_parts:
+            raise Refusal("conversation handler requires text field in content parts")
+        raw_text = content_parts["text"]
+    elif isinstance(content_parts, list):
+        if len(content_parts) != 1 or not isinstance(content_parts[0], dict):
+            raise Refusal("conversation handler requires single text part object in list")
+        if "text" not in content_parts[0]:
+            raise Refusal("conversation handler requires text field in content parts")
+        raw_text = content_parts[0]["text"]
+    else:
+        raise Refusal("invalid content parts structure for conversation handler")
+
+    if type(raw_text) is not str:
+        raise Refusal("conversation handler requires string text value")
+    if not (0 < len(raw_text) <= MAX_INPUT_CHARS):
+        raise Refusal("conversation handler requires non-empty text within bounds")
+    return raw_text
+
+
 def agent_card(port):
     """Advertise only the real loopback JSON-RPC skill; never use Host header."""
     if type(port) is not int or not 0 < port <= 65535:
@@ -337,7 +365,7 @@ class Journal:
             self._seen[message_id] = (event["requestHash"], event["response"])
             self._last_hash = expected
 
-    def response_for(self, request, message_id, envelope_state=None):
+    def response_for(self, request, message_id, envelope_state=None, reply_text=None):
         if self._poisoned:
             raise Refusal("journal not available after write failure")
             
@@ -352,9 +380,10 @@ class Journal:
             if request_hash != old_hash:
                 raise Refusal("conflicting replay messageId")
             return old_response
-        # No prompt-dependent response: no model, tools or interpretation.
+        # Generate response using handler if provided, else default ACK
+        text_content = reply_text if reply_text is not None else ACK
         answer = {"message": {"messageId": str(uuid.uuid4()), "contextId": str(uuid.uuid4()),
-                              "role": "ROLE_AGENT", "parts": [{"text": ACK, "mediaType": "text/plain"}]}}
+                              "role": "ROLE_AGENT", "parts": [{"text": text_content, "mediaType": "text/plain"}]}}
         event = {"messageId": message_id, "requestHash": request_hash,
                  "response": answer, "prev": self._last_hash}
         if envelope_state:
@@ -393,9 +422,10 @@ class LocalServer(HTTPServer):
         connection.settimeout(3.0)
         return connection, address
 
-    def __init__(self, journal, port=0, gate=None):
+    def __init__(self, journal, port=0, gate=None, handler=None):
         self.journal = journal
         self.gate = gate if gate is not None else build_synthetic_gate()
+        self.handler = handler
         super().__init__(("127.0.0.1", port), LocalHandler)
         if self.server_address[0] != "127.0.0.1":
             self.server_close()
@@ -520,7 +550,13 @@ class LocalHandler(BaseHTTPRequestHandler):
                     "metadataHash": res["metadataHash"]
                 }
                 
-                response = self.server.journal.response_for(request, message_id, envelope_state)
+                # Check for prompt-dependent conversation handler
+                reply_text = None
+                if getattr(self.server, "handler", None) is not None:
+                    incoming_text = _extract_conversation_text(env_dict.get("contentParts"))
+                    reply_text = self.server.handler(incoming_text, sender_id, recipient_id)
+                
+                response = self.server.journal.response_for(request, message_id, envelope_state, reply_text=reply_text)
                 
                 # Atomic state commit upon successful journal write
                 session_manifest.update(test_manifest)
@@ -546,10 +582,13 @@ def main(argv=None):
     parser.add_argument("--journal-dir", type=Path, required=True,
                         help="existing operator-owned mode 0700 directory (outside public repo)")
     parser.add_argument("--port", type=int, default=0, help="loopback port; 0 chooses free ephemeral port")
+    parser.add_argument("--agent-id", choices=["agent-a", "agent-b"], default=None,
+                        help="synthetic agent personality for conversation demonstration")
     options = parser.parse_args(argv)
     journal = Journal(options.journal_dir)
+    handler = CONVERSATION_HANDLERS.get(options.agent_id) if options.agent_id else None
     try:
-        with LocalServer(journal, options.port) as server:
+        with LocalServer(journal, options.port, handler=handler) as server:
             print("LOCAL_ONLY_NOT_DEPLOYED http://127.0.0.1:%d%s" % (server.server_address[1], CARD_PATH),
                   flush=True)
             server.serve_forever(poll_interval=0.05)
