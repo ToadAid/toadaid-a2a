@@ -210,6 +210,33 @@ def _request_parts(request):
     return message_id, None
 
 
+def _extract_conversation_text(content_parts):
+    """Extract and strictly validate text part when a conversation handler is active.
+
+    Requires an appropriately bounded string text part.
+    Rejects null, numeric, boolean, list, empty, and other non-string text values.
+    """
+    raw_text = None
+    if isinstance(content_parts, dict):
+        if "text" not in content_parts:
+            raise Refusal("conversation handler requires text field in content parts")
+        raw_text = content_parts["text"]
+    elif isinstance(content_parts, list):
+        if len(content_parts) != 1 or not isinstance(content_parts[0], dict):
+            raise Refusal("conversation handler requires single text part object in list")
+        if "text" not in content_parts[0]:
+            raise Refusal("conversation handler requires text field in content parts")
+        raw_text = content_parts[0]["text"]
+    else:
+        raise Refusal("invalid content parts structure for conversation handler")
+
+    if type(raw_text) is not str:
+        raise Refusal("conversation handler requires string text value")
+    if not (0 < len(raw_text) <= MAX_INPUT_CHARS):
+        raise Refusal("conversation handler requires non-empty text within bounds")
+    return raw_text
+
+
 def agent_card(port):
     """Advertise only the real loopback JSON-RPC skill; never use Host header."""
     if type(port) is not int or not 0 < port <= 65535:
@@ -524,15 +551,9 @@ class LocalHandler(BaseHTTPRequestHandler):
                 }
                 
                 # Check for prompt-dependent conversation handler
-                incoming_text = ""
-                content_parts = env_dict.get("contentParts")
-                if isinstance(content_parts, dict):
-                    incoming_text = content_parts.get("text", "")
-                elif isinstance(content_parts, list) and content_parts and isinstance(content_parts[0], dict):
-                    incoming_text = content_parts[0].get("text", "")
-                    
                 reply_text = None
                 if getattr(self.server, "handler", None) is not None:
+                    incoming_text = _extract_conversation_text(env_dict.get("contentParts"))
                     reply_text = self.server.handler(incoming_text, sender_id, recipient_id)
                 
                 response = self.server.journal.response_for(request, message_id, envelope_state, reply_text=reply_text)

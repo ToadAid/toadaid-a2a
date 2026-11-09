@@ -52,6 +52,8 @@ def create_envelope_turn(
     """Build a valid deterministic A2A envelope turn preserving all invariants."""
     now_ms = int(time.time() * 1000)
     content_parts = {"text": text, "mediaType": "text/plain"}
+    if overrides and "contentParts" in overrides:
+        content_parts = overrides["contentParts"]
     payload_hash = _hash_payload(content_parts)
 
     metadata = {

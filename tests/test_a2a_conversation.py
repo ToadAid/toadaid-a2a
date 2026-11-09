@@ -277,6 +277,102 @@ class TwoFrogsConversationTests(unittest.TestCase):
             server.server_close()
             journal.close()
 
+    def test_conversation_handler_rejects_non_string_and_invalid_text(self):
+        """When conversation handler is active, rejects null, numeric, boolean, list, empty, and oversized text."""
+        journal_b = Journal(self.dir_b)
+        server_b = LocalServer(journal_b, handler=pond_handler_b)
+        thread_b = threading.Thread(target=server_b.serve_forever, daemon=True)
+        thread_b.start()
+
+        try:
+            port_b = server_b.server_address[1]
+
+            # 1. Null text value
+            req_null = create_envelope_turn("agent-a", "agent-b", 1, "msg-null", "", overrides={"contentParts": {"text": None}})
+            status, resp = post_envelope_rpc(port_b, req_null, cred="fixture-caller-a")
+            self.assertEqual(status, 400)
+            self.assertIn("conversation handler requires string text value", resp["error"]["message"])
+            self.assertEqual(journal_b.get_session("session-pond-1")["currentSequence"], 0)
+            self.assertEqual((self.dir_b / "local-probe-events.jsonl").read_bytes(), b"")
+
+            # 2. Numeric text value
+            req_num = create_envelope_turn("agent-a", "agent-b", 1, "msg-num", "", overrides={"contentParts": {"text": 42}})
+            status, resp = post_envelope_rpc(port_b, req_num, cred="fixture-caller-a")
+            self.assertEqual(status, 400)
+            self.assertIn("conversation handler requires string text value", resp["error"]["message"])
+            self.assertEqual(journal_b.get_session("session-pond-1")["currentSequence"], 0)
+            self.assertEqual((self.dir_b / "local-probe-events.jsonl").read_bytes(), b"")
+
+            # 3. Boolean text value
+            req_bool = create_envelope_turn("agent-a", "agent-b", 1, "msg-bool", "", overrides={"contentParts": {"text": True}})
+            status, resp = post_envelope_rpc(port_b, req_bool, cred="fixture-caller-a")
+            self.assertEqual(status, 400)
+            self.assertIn("conversation handler requires string text value", resp["error"]["message"])
+            self.assertEqual(journal_b.get_session("session-pond-1")["currentSequence"], 0)
+            self.assertEqual((self.dir_b / "local-probe-events.jsonl").read_bytes(), b"")
+
+            # 4. List text value
+            req_list = create_envelope_turn("agent-a", "agent-b", 1, "msg-list", "", overrides={"contentParts": {"text": ["nested", "string"]}})
+            status, resp = post_envelope_rpc(port_b, req_list, cred="fixture-caller-a")
+            self.assertEqual(status, 400)
+            self.assertIn("conversation handler requires string text value", resp["error"]["message"])
+            self.assertEqual(journal_b.get_session("session-pond-1")["currentSequence"], 0)
+            self.assertEqual((self.dir_b / "local-probe-events.jsonl").read_bytes(), b"")
+
+            # 5. Missing text field
+            req_missing = create_envelope_turn("agent-a", "agent-b", 1, "msg-missing", "", overrides={"contentParts": {"other_field": "some_value"}})
+            status, resp = post_envelope_rpc(port_b, req_missing, cred="fixture-caller-a")
+            self.assertEqual(status, 400)
+            self.assertIn("conversation handler requires text field in content parts", resp["error"]["message"])
+            self.assertEqual(journal_b.get_session("session-pond-1")["currentSequence"], 0)
+            self.assertEqual((self.dir_b / "local-probe-events.jsonl").read_bytes(), b"")
+
+            # 6. Empty text string
+            req_empty = create_envelope_turn("agent-a", "agent-b", 1, "msg-empty", "", overrides={"contentParts": {"text": ""}})
+            status, resp = post_envelope_rpc(port_b, req_empty, cred="fixture-caller-a")
+            self.assertEqual(status, 400)
+            self.assertIn("conversation handler requires non-empty text within bounds", resp["error"]["message"])
+            self.assertEqual(journal_b.get_session("session-pond-1")["currentSequence"], 0)
+            self.assertEqual((self.dir_b / "local-probe-events.jsonl").read_bytes(), b"")
+
+            # 7. Oversized text string
+            req_oversized = create_envelope_turn("agent-a", "agent-b", 1, "msg-oversized", "", overrides={"contentParts": {"text": "A" * 1025}})
+            status, resp = post_envelope_rpc(port_b, req_oversized, cred="fixture-caller-a")
+            self.assertEqual(status, 400)
+            self.assertIn("conversation handler requires non-empty text within bounds", resp["error"]["message"])
+            self.assertEqual(journal_b.get_session("session-pond-1")["currentSequence"], 0)
+            self.assertEqual((self.dir_b / "local-probe-events.jsonl").read_bytes(), b"")
+
+        finally:
+            server_b.shutdown()
+            thread_b.join(timeout=2)
+            server_b.server_close()
+            journal_b.close()
+
+    def test_legacy_probe_without_handler_accepts_arbitrary_envelope_content(self):
+        """When no conversation handler is set, legacy fixed-ACK probe accepts arbitrary valid content parts."""
+        journal_b = Journal(self.dir_b)
+        server_b = LocalServer(journal_b, handler=None)
+        thread_b = threading.Thread(target=server_b.serve_forever, daemon=True)
+        thread_b.start()
+
+        try:
+            port_b = server_b.server_address[1]
+
+            # Envelope with non-text dict content parts
+            req_custom = create_envelope_turn("agent-a", "agent-b", 1, "msg-custom-payload", "", overrides={"contentParts": {"custom_data": [1, 2, 3]}})
+            status, resp = post_envelope_rpc(port_b, req_custom, cred="fixture-caller-a")
+            self.assertEqual(status, 200)
+            from agent_web.local_probe import ACK
+            self.assertEqual(resp["result"]["message"]["parts"][0]["text"], ACK)
+            self.assertEqual(journal_b.get_session("session-pond-1")["currentSequence"], 1)
+
+        finally:
+            server_b.shutdown()
+            thread_b.join(timeout=2)
+            server_b.server_close()
+            journal_b.close()
+
 
 if __name__ == "__main__":
     unittest.main()
