@@ -57,8 +57,15 @@ def _valid_id(value):
             and (isinstance(value, int) or 0 < len(value) <= 64))
 
 
+from agent_web.envelope import validate_envelope, EnvelopeRefusal
+
+def strict_synthetic_verifier(metadata, signature, sender_id):
+    """Explicitly injected test-only verifier checking expected synthetic credentials."""
+    expected = f"synthetic_signature_for_{sender_id}"
+    return signature == expected
+
 def _request_parts(request):
-    """Conservative subset: one plain text part, no task/context continuation."""
+    """Conservative subset: validates raw legacy payload or extracts envelope."""
     if not isinstance(request, dict) or request.get("jsonrpc") != "2.0":
         raise Refusal("invalid JSON-RPC request")
     if not _valid_id(request.get("id")) or request.get("method") != "SendMessage":
@@ -66,7 +73,19 @@ def _request_parts(request):
     if set(request) - {"jsonrpc", "id", "method", "params"}:
         raise Refusal("unexpected RPC envelope field")
     params = request.get("params")
-    if not isinstance(params, dict) or set(params) != {"message"}:
+    
+    if not isinstance(params, dict):
+        raise Refusal("only new-message requests are supported")
+        
+    # Dual-mode support: check if it's using the new A2A envelope wrapping
+    if "envelope" in params:
+        env_dict = params["envelope"]
+        if not isinstance(env_dict, dict):
+            raise Refusal("envelope must be an object")
+        return None, env_dict
+
+    # Legacy fallback for existing tests
+    if set(params) != {"message"}:
         raise Refusal("only new-message requests are supported")
     message = params["message"]
     if not isinstance(message, dict) or set(message) != {"messageId", "role", "parts"}:
@@ -87,7 +106,7 @@ def _request_parts(request):
     text = part.get("text")
     if not isinstance(text, str) or not 0 < len(text) <= MAX_INPUT_CHARS:
         raise Refusal("invalid text part")
-    return message_id
+    return message_id, None
 
 
 def agent_card(port):
@@ -122,6 +141,16 @@ class Journal:
         meta = root.stat(follow_symlinks=False)
         if not stat.S_ISDIR(meta.st_mode) or meta.st_uid != os.getuid() or stat.S_IMODE(meta.st_mode) != 0o700:
             raise Refusal("journal directory must be owned by operator with mode 0700")
+            
+        self._sessions = {}
+        sessions_file = root / "sessions.json"
+        if sessions_file.exists():
+            try:
+                import json
+                self._sessions = json.loads(sessions_file.read_text())
+            except Exception as exc:
+                raise Refusal("invalid sessions.json") from exc
+                
         self._path = root / "local-probe-events.jsonl"
         flags = os.O_RDWR | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
         self._fd = os.open(self._path, flags, 0o600)
@@ -143,6 +172,9 @@ class Journal:
             self._closed = True
             raise
 
+    def get_session(self, session_id):
+        return self._sessions.get(session_id)
+
     def _load(self):
         size = os.fstat(self._fd).st_size
         if size > MAX_JOURNAL_BYTES:
@@ -161,9 +193,15 @@ class Journal:
                 event = _parse(line)
             except Refusal as exc:
                 raise Refusal("invalid journal record") from exc
-            if not isinstance(event, dict) or set(event) != {"messageId", "requestHash", "response", "prev", "digest"}:
+            if not isinstance(event, dict):
                 raise Refusal("invalid journal fields")
-            payload = {k: event[k] for k in ("messageId", "requestHash", "response", "prev")}
+            keys = set(event)
+            if keys not in ({"messageId", "requestHash", "response", "prev", "digest"},
+                            {"messageId", "requestHash", "response", "prev", "digest", "envelopeState"}):
+                raise Refusal("invalid journal fields")
+                
+            payload_keys = [k for k in ("messageId", "requestHash", "response", "prev", "envelopeState") if k in event]
+            payload = {k: event[k] for k in payload_keys}
             expected = hashlib.sha256(_canonical(payload)).hexdigest()
             if event["prev"] != self._last_hash or event["digest"] != expected:
                 raise Refusal("journal chain integrity failure")
@@ -172,13 +210,43 @@ class Journal:
                 raise Refusal("journal duplicate messageId")
             if not isinstance(event["requestHash"], str) or not isinstance(event["response"], dict):
                 raise Refusal("invalid journal payload")
+                
+            if "envelopeState" in event:
+                state = event["envelopeState"]
+                if not isinstance(state, dict) or set(state) != {"sessionId", "sequence", "metadataHash"}:
+                    raise Refusal("invalid envelope state")
+                session_id = state["sessionId"]
+                seq = state["sequence"]
+                meta_hash = state["metadataHash"]
+                if not isinstance(session_id, str) or not session_id:
+                    raise Refusal("invalid envelope state sessionId")
+                if type(seq) is not int or seq <= 0:
+                    raise Refusal("invalid envelope state sequence")
+                if not isinstance(meta_hash, str) or not meta_hash:
+                    raise Refusal("invalid envelope state metadataHash")
+                    
+                session = self._sessions.get(session_id)
+                if not session:
+                    raise Refusal("journal references unprovisioned session")
+                if session.get("currentSequence", 0) != seq - 1:
+                    raise Refusal("journal envelope sequence gap or out of order")
+                seen = session.setdefault("seenMessageIds", {})
+                session["currentSequence"] = seq
+                seen[message_id] = meta_hash
+
             self._seen[message_id] = (event["requestHash"], event["response"])
             self._last_hash = expected
 
-    def response_for(self, request, message_id):
+    def response_for(self, request, message_id, envelope_state=None):
         if self._poisoned:
             raise Refusal("journal not available after write failure")
-        request_hash = hashlib.sha256(_canonical(request["params"]["message"])).hexdigest()
+            
+        params = request["params"]
+        if "envelope" in params:
+            request_hash = hashlib.sha256(_canonical(params["envelope"])).hexdigest()
+        else:
+            request_hash = hashlib.sha256(_canonical(params["message"])).hexdigest()
+            
         if message_id in self._seen:
             old_hash, old_response = self._seen[message_id]
             if request_hash != old_hash:
@@ -189,7 +257,12 @@ class Journal:
                               "role": "ROLE_AGENT", "parts": [{"text": ACK, "mediaType": "text/plain"}]}}
         event = {"messageId": message_id, "requestHash": request_hash,
                  "response": answer, "prev": self._last_hash}
-        digest = hashlib.sha256(_canonical(event)).hexdigest()
+        if envelope_state:
+            event["envelopeState"] = envelope_state
+            
+        payload_keys = [k for k in ("messageId", "requestHash", "response", "prev", "envelopeState") if k in event]
+        payload = {k: event[k] for k in payload_keys}
+        digest = hashlib.sha256(_canonical(payload)).hexdigest()
         event["digest"] = digest
         line = _canonical(event) + b"\n"
         if os.fstat(self._fd).st_size + len(line) > MAX_JOURNAL_BYTES:
@@ -280,8 +353,43 @@ class LocalHandler(BaseHTTPRequestHandler):
         raw = self.rfile.read(count)
         try:
             request = _parse(raw)
-            message_id = _request_parts(request)
-            response = self.server.journal.response_for(request, message_id)
+            message_id, env_dict = _request_parts(request)
+            
+            if env_dict is not None:
+                metadata = env_dict.get("metadata")
+                if not isinstance(metadata, dict):
+                    raise Refusal("envelope missing or invalid metadata")
+                    
+                session_id = metadata.get("sessionId")
+                if not isinstance(session_id, str):
+                    raise Refusal("invalid or missing sessionId")
+                    
+                session_manifest = self.server.journal.get_session(session_id)
+                if not session_manifest:
+                    raise Refusal("session not provisioned")
+                    
+                import copy
+                test_manifest = copy.deepcopy(session_manifest)
+                
+                try:
+                    res = validate_envelope(_canonical(env_dict), test_manifest, strict_synthetic_verifier)
+                except EnvelopeRefusal as e:
+                    raise Refusal(f"envelope refusal: {str(e)}")
+                    
+                message_id = res["envelope"]["metadata"]["messageId"]
+                envelope_state = {
+                    "sessionId": session_id,
+                    "sequence": res["envelope"]["metadata"]["sequence"],
+                    "metadataHash": res["metadataHash"]
+                }
+                
+                response = self.server.journal.response_for(request, message_id, envelope_state)
+                
+                # Atomic state commit upon successful journal write
+                session_manifest.update(test_manifest)
+            else:
+                response = self.server.journal.response_for(request, message_id)
+                
         except Refusal as exc:
             self._send(400, {"jsonrpc": "2.0", "id": None,
                              "error": {"code": -32602, "message": str(exc)}})
