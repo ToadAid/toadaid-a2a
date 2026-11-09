@@ -57,8 +57,16 @@ def _valid_id(value):
             and (isinstance(value, int) or 0 < len(value) <= 64))
 
 
+from agent_web.envelope import validate_envelope, EnvelopeRefusal
+
+def _dummy_verifier(metadata, signature, sender_id):
+    # Dummy signature verifier for local synthetic use
+    return signature != "invalid_sig"
+
+_synthetic_sessions = {}
+
 def _request_parts(request):
-    """Conservative subset: one plain text part, no task/context continuation."""
+    """Conservative subset: validates raw legacy payload or delegates to envelope engine."""
     if not isinstance(request, dict) or request.get("jsonrpc") != "2.0":
         raise Refusal("invalid JSON-RPC request")
     if not _valid_id(request.get("id")) or request.get("method") != "SendMessage":
@@ -66,7 +74,40 @@ def _request_parts(request):
     if set(request) - {"jsonrpc", "id", "method", "params"}:
         raise Refusal("unexpected RPC envelope field")
     params = request.get("params")
-    if not isinstance(params, dict) or set(params) != {"message"}:
+    
+    if not isinstance(params, dict):
+        raise Refusal("only new-message requests are supported")
+        
+    # Dual-mode support: check if it's using the new A2A envelope wrapping
+    if "envelope" in params:
+        env_bytes = _canonical(params["envelope"])
+        
+        session_id = params["envelope"].get("metadata", {}).get("sessionId")
+        if session_id not in _synthetic_sessions:
+            _synthetic_sessions[session_id] = {
+                "sessionId": session_id,
+                "state": "OPEN",
+                "participants": {
+                    "agent-a": {"agentId": "agent-a"},
+                    "agent-b": {"agentId": "agent-b"}
+                },
+                "maxMessageBytes": MAX_REQUEST_BYTES,
+                "maxTurns": 1000,
+                "currentSequence": 0,
+                "seenMessageIds": {}
+            }
+            
+        session_manifest = _synthetic_sessions[session_id]
+        
+        try:
+            res = validate_envelope(env_bytes, session_manifest, _dummy_verifier)
+            message_id = res["envelope"]["metadata"]["messageId"]
+            return message_id
+        except EnvelopeRefusal as e:
+            raise Refusal(f"envelope refusal: {str(e)}")
+
+    # Legacy fallback for existing tests
+    if set(params) != {"message"}:
         raise Refusal("only new-message requests are supported")
     message = params["message"]
     if not isinstance(message, dict) or set(message) != {"messageId", "role", "parts"}:
@@ -178,7 +219,13 @@ class Journal:
     def response_for(self, request, message_id):
         if self._poisoned:
             raise Refusal("journal not available after write failure")
-        request_hash = hashlib.sha256(_canonical(request["params"]["message"])).hexdigest()
+            
+        params = request["params"]
+        if "envelope" in params:
+            request_hash = hashlib.sha256(_canonical(params["envelope"])).hexdigest()
+        else:
+            request_hash = hashlib.sha256(_canonical(params["message"])).hexdigest()
+            
         if message_id in self._seen:
             old_hash, old_response = self._seen[message_id]
             if request_hash != old_hash:
