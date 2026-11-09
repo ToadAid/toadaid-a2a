@@ -59,14 +59,13 @@ def _valid_id(value):
 
 from agent_web.envelope import validate_envelope, EnvelopeRefusal
 
-def _dummy_verifier(metadata, signature, sender_id):
-    # Dummy signature verifier for local synthetic use
-    return signature != "invalid_sig"
-
-_synthetic_sessions = {}
+def strict_synthetic_verifier(metadata, signature, sender_id):
+    """Explicitly injected test-only verifier checking expected synthetic credentials."""
+    expected = f"synthetic_signature_for_{sender_id}"
+    return signature == expected
 
 def _request_parts(request):
-    """Conservative subset: validates raw legacy payload or delegates to envelope engine."""
+    """Conservative subset: validates raw legacy payload or extracts envelope."""
     if not isinstance(request, dict) or request.get("jsonrpc") != "2.0":
         raise Refusal("invalid JSON-RPC request")
     if not _valid_id(request.get("id")) or request.get("method") != "SendMessage":
@@ -80,31 +79,10 @@ def _request_parts(request):
         
     # Dual-mode support: check if it's using the new A2A envelope wrapping
     if "envelope" in params:
-        env_bytes = _canonical(params["envelope"])
-        
-        session_id = params["envelope"].get("metadata", {}).get("sessionId")
-        if session_id not in _synthetic_sessions:
-            _synthetic_sessions[session_id] = {
-                "sessionId": session_id,
-                "state": "OPEN",
-                "participants": {
-                    "agent-a": {"agentId": "agent-a"},
-                    "agent-b": {"agentId": "agent-b"}
-                },
-                "maxMessageBytes": MAX_REQUEST_BYTES,
-                "maxTurns": 1000,
-                "currentSequence": 0,
-                "seenMessageIds": {}
-            }
-            
-        session_manifest = _synthetic_sessions[session_id]
-        
-        try:
-            res = validate_envelope(env_bytes, session_manifest, _dummy_verifier)
-            message_id = res["envelope"]["metadata"]["messageId"]
-            return message_id
-        except EnvelopeRefusal as e:
-            raise Refusal(f"envelope refusal: {str(e)}")
+        env_dict = params["envelope"]
+        if not isinstance(env_dict, dict):
+            raise Refusal("envelope must be an object")
+        return None, env_dict
 
     # Legacy fallback for existing tests
     if set(params) != {"message"}:
@@ -128,7 +106,7 @@ def _request_parts(request):
     text = part.get("text")
     if not isinstance(text, str) or not 0 < len(text) <= MAX_INPUT_CHARS:
         raise Refusal("invalid text part")
-    return message_id
+    return message_id, None
 
 
 def agent_card(port):
@@ -163,6 +141,16 @@ class Journal:
         meta = root.stat(follow_symlinks=False)
         if not stat.S_ISDIR(meta.st_mode) or meta.st_uid != os.getuid() or stat.S_IMODE(meta.st_mode) != 0o700:
             raise Refusal("journal directory must be owned by operator with mode 0700")
+            
+        self._sessions = {}
+        sessions_file = root / "sessions.json"
+        if sessions_file.exists():
+            try:
+                import json
+                self._sessions = json.loads(sessions_file.read_text())
+            except Exception as exc:
+                raise Refusal("invalid sessions.json") from exc
+                
         self._path = root / "local-probe-events.jsonl"
         flags = os.O_RDWR | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
         self._fd = os.open(self._path, flags, 0o600)
@@ -183,6 +171,9 @@ class Journal:
             os.close(self._fd)
             self._closed = True
             raise
+
+    def get_session(self, session_id):
+        return self._sessions.get(session_id)
 
     def _load(self):
         size = os.fstat(self._fd).st_size
@@ -327,8 +318,33 @@ class LocalHandler(BaseHTTPRequestHandler):
         raw = self.rfile.read(count)
         try:
             request = _parse(raw)
-            message_id = _request_parts(request)
-            response = self.server.journal.response_for(request, message_id)
+            message_id, env_dict = _request_parts(request)
+            
+            if env_dict is not None:
+                session_id = env_dict.get("metadata", {}).get("sessionId")
+                if not isinstance(session_id, str):
+                    raise Refusal("invalid or missing sessionId")
+                    
+                session_manifest = self.server.journal.get_session(session_id)
+                if not session_manifest:
+                    raise Refusal("session not provisioned")
+                    
+                import copy
+                test_manifest = copy.deepcopy(session_manifest)
+                
+                try:
+                    res = validate_envelope(_canonical(env_dict), test_manifest, strict_synthetic_verifier)
+                except EnvelopeRefusal as e:
+                    raise Refusal(f"envelope refusal: {str(e)}")
+                    
+                message_id = res["envelope"]["metadata"]["messageId"]
+                response = self.server.journal.response_for(request, message_id)
+                
+                # Atomic state commit upon successful journal write
+                session_manifest.update(test_manifest)
+            else:
+                response = self.server.journal.response_for(request, message_id)
+                
         except Refusal as exc:
             self._send(400, {"jsonrpc": "2.0", "id": None,
                              "error": {"code": -32602, "message": str(exc)}})
