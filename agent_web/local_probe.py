@@ -127,40 +127,33 @@ def strict_synthetic_verifier(metadata, signature, sender_id):
     expected = f"synthetic_signature_for_{sender_id}"
     return signature == expected
 
-def _gate_authorized(sender_id, recipient_id, message_id, correlation_id="corr-1"):
-    # Clock fixture that always matches the observation
-    now_fn = lambda: datetime.datetime(2026, 11, 9, 0, 1, 0, tzinfo=datetime.timezone.utc)
-    try:
-        gate = RegisteredAgentGate(
-            trusted_registration_adapter=synthetic_registration_adapter(_ADMISSION_DECISIONS),
-            trusted_caller_verifier=synthetic_caller_verifier(_CALLER_BINDINGS),
-            trusted_lifecycle_source=synthetic_lifecycle_source(_LIFECYCLE_STATES),
-            now=now_fn,
-            journal=AdmissionJournal()
-        )
+def build_synthetic_gate(clock=None):
+    if clock is None:
+        clock = lambda: datetime.datetime.now(datetime.timezone.utc)
         
-        sender_cred = _CRED_A if sender_id == "agent-a" else _CRED_B if sender_id == "agent-b" else None
-        if sender_cred is None:
-            return False
-            
-        sender_request = {
-            "agentRef": sender_id, "tenantRef": "tenant-alpha",
-            "ownerRef": "owner-alpha" if sender_id == "agent-a" else "owner-beta",
-            "participationScope": "a2a-message-send",
-            "messageId": message_id, "correlationId": correlation_id,
-            "occurredAtUtc": "2026-11-09T00:01:00Z",
-            "message": {"messageType": "conversation_message", "body": "x"}
-        }
+    now = clock()
+    # Observation must be within LIFECYCLE_MAX_OBSERVATION_AGE_SECONDS (300s)
+    observed = (now - datetime.timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    expires = (now + datetime.timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    
+    import copy
+    fresh_decisions = copy.deepcopy(_ADMISSION_DECISIONS)
+    fresh_states = copy.deepcopy(_LIFECYCLE_STATES)
+    
+    for d in fresh_decisions.values():
+        d["decisionObservedAtUtc"] = observed
+        d["evidenceExpiresAtUtc"] = expires
         
-        recipient_context = {
-            "agentRef": recipient_id, "tenantRef": "tenant-alpha",
-            "ownerRef": "owner-alpha" if recipient_id == "agent-a" else "owner-beta",
-        }
-        
-        gate.route(sender_request, recipient_context, sender_cred)
-        return True
-    except (ParticipationRefused, AdmissionRefused, ObservatoryRefusal) as e:
-        return False
+    for s in fresh_states.values():
+        s["observedAtUtc"] = observed
+
+    return RegisteredAgentGate(
+        trusted_registration_adapter=synthetic_registration_adapter(fresh_decisions),
+        trusted_caller_verifier=synthetic_caller_verifier(_CALLER_BINDINGS),
+        trusted_lifecycle_source=synthetic_lifecycle_source(fresh_states),
+        now=clock,
+        journal=AdmissionJournal()
+    )
 
 def _request_parts(request):
     """Conservative subset: validates raw legacy payload or extracts envelope."""
@@ -391,8 +384,9 @@ class LocalServer(HTTPServer):
         connection.settimeout(3.0)
         return connection, address
 
-    def __init__(self, journal, port=0):
+    def __init__(self, journal, port=0, gate=None):
         self.journal = journal
+        self.gate = gate if gate is not None else build_synthetic_gate()
         super().__init__(("127.0.0.1", port), LocalHandler)
         if self.server_address[0] != "127.0.0.1":
             self.server_close()
@@ -479,8 +473,38 @@ class LocalHandler(BaseHTTPRequestHandler):
                 recipient_id = res["envelope"]["metadata"]["recipientAgentId"]
                 
                 # Verify admission gate
-                if not _gate_authorized(sender_id, recipient_id, message_id):
-                    raise Refusal("agent admission gate refused participation")
+                auth_header = self.headers.get("Authorization", "")
+                if not auth_header.startswith("Bearer "):
+                    raise Refusal("missing or invalid authorization header")
+                cred_label = auth_header[7:]
+                
+                # Retrieve the exact synthetic CallerCredential instance (it lacks __eq__/__hash__ overrides)
+                if cred_label == "fixture-caller-a":
+                    caller_cred = _CRED_A
+                elif cred_label == "fixture-caller-b":
+                    caller_cred = _CRED_B
+                else:
+                    caller_cred = synthetic_caller_credential(cred_label)
+                
+                # Synthetic timestamps for evidence bounds checking relative to the gate's clock
+                now_utc = self.server.gate.now().strftime("%Y-%m-%dT%H:%M:%SZ")
+                
+                sender_request = {
+                    "agentRef": sender_id, "tenantRef": "tenant-alpha",
+                    "ownerRef": "owner-alpha" if sender_id == "agent-a" else "owner-beta",
+                    "participationScope": "a2a-message-send",
+                    "messageId": message_id, "correlationId": "corr-test",
+                    "occurredAtUtc": now_utc,
+                    "message": {"messageType": "conversation_message", "body": "x"}
+                }
+                recipient_context = {
+                    "agentRef": recipient_id, "tenantRef": "tenant-alpha",
+                    "ownerRef": "owner-alpha" if recipient_id == "agent-a" else "owner-beta",
+                }
+                try:
+                    self.server.gate.route(sender_request, recipient_context, caller_cred)
+                except (ParticipationRefused, AdmissionRefused, ObservatoryRefusal) as e:
+                    raise Refusal(f"agent admission gate refused participation: {str(e)}")
                     
                 envelope_state = {
                     "sessionId": session_id,

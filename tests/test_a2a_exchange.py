@@ -148,11 +148,11 @@ class A2AExchangeTests(unittest.TestCase):
         
         self.tmp.cleanup()
 
-    def rpc(self, server, payload):
+    def rpc(self, server, payload, cred="fixture-caller-a"):
         conn = http.client.HTTPConnection("127.0.0.1", server.server_address[1], timeout=2)
         try:
             conn.request("POST", RPC_PATH, json.dumps(payload).encode(),
-                         {"Content-Type": "application/json", "A2A-Version": "1.0"})
+                         {"Content-Type": "application/json", "A2A-Version": "1.0", "Authorization": f"Bearer {cred}"})
             response = conn.getresponse()
             data = json.loads(response.read())
             return response.status, data
@@ -263,15 +263,15 @@ class A2AExchangeTests(unittest.TestCase):
     def test_agent_a_to_b_to_a_exchange(self):
         # 1. Agent A sends to Agent B (Sequence 1)
         req_1 = create_envelope_request("agent-a", "agent-b", 1, "msg-1", "Hello from A")
-        status_1, resp_1 = self.rpc(self.server_b, req_1)
+        status_1, resp_1 = self.rpc(self.server_b, req_1, cred="fixture-caller-a")
         self.assertEqual(status_1, 200)
         
-        # Simulate A recording its own outgoing message locally
+        # Simulate A recording its own outgoing message locally by just writing to its journal directly
         self.journal_a.get_session("session-exchange-1")["currentSequence"] = 1
         
         # 2. Agent B replies to Agent A (Sequence 2)
         req_2 = create_envelope_request("agent-b", "agent-a", 2, "msg-2", "Reply from B")
-        status_2, resp_2 = self.rpc(self.server_a, req_2)
+        status_2, resp_2 = self.rpc(self.server_a, req_2, cred="fixture-caller-b")
         self.assertEqual(status_2, 200)
         
         # Simulate B recording its own outgoing message locally
@@ -279,7 +279,7 @@ class A2AExchangeTests(unittest.TestCase):
         
         # 3. Agent A replies back to Agent B (Sequence 3)
         req_3 = create_envelope_request("agent-a", "agent-b", 3, "msg-3", "Acknowledge reply")
-        status_3, resp_3 = self.rpc(self.server_b, req_3)
+        status_3, resp_3 = self.rpc(self.server_b, req_3, cred="fixture-caller-a")
         self.assertEqual(status_3, 200)
 
     def test_unregistered_agent_is_refused_admission(self):
@@ -287,6 +287,51 @@ class A2AExchangeTests(unittest.TestCase):
         status_unreg, resp_unreg = self.rpc(self.server_b, req_unreg)
         self.assertEqual(status_unreg, 400)
         self.assertIn("agent admission gate refused participation", resp_unreg["error"]["message"])
+
+    def test_forged_sender_identity_refused(self):
+        # Envelope says Agent A, but transport layer authenticates as Agent B
+        req_forged = create_envelope_request("agent-a", "agent-b", 1, "msg-forgery", "I am totally A", session_id="session-exchange-1")
+        status, resp = self.rpc(self.server_b, req_forged, cred="fixture-caller-b")
+        self.assertEqual(status, 400)
+        self.assertIn("CALLER_IDENTITY_MISMATCH", resp["error"]["message"])
+        
+    def test_missing_or_unknown_credential_refused(self):
+        req = create_envelope_request("agent-a", "agent-b", 1, "msg-noauth", "Hello", session_id="session-exchange-1")
+        status, resp = self.rpc(self.server_b, req, cred="unknown_caller")
+        self.assertEqual(status, 400)
+        self.assertIn("CALLER_NOT_AUTHENTICATED", resp["error"]["message"])
+
+    def test_revoked_or_suspended_agent_refused(self):
+        # Mutate the trusted lifecycle source in Agent B's gate to simulate Agent A suspension
+        old_source = self.server_b.gate.trusted_lifecycle_source
+        def suspended_source(query):
+            if query.get("agentRef") == "agent-a":
+                return {"lifecycleStatus": "suspended", "currentCredentialGeneration": 1, "currentRevocationEpoch": 1, "observedAtUtc": self.server_b.gate.now().strftime("%Y-%m-%dT%H:%M:%SZ"), "agentRef": "agent-a", "tenantRef": "tenant-alpha", "ownerRef": "owner-alpha", "kind": "toadaid-a2a-credential-lifecycle-state"}
+            return old_source(query)
+        self.server_b.gate.trusted_lifecycle_source = suspended_source
+        
+        req = create_envelope_request("agent-a", "agent-b", 1, "msg-suspended", "Let me in", session_id="session-exchange-1")
+        status, resp = self.rpc(self.server_b, req, cred="fixture-caller-a")
+        self.assertEqual(status, 400)
+        self.assertIn("LIFECYCLE_STATUS_SUSPENDED", resp["error"]["message"])
+
+    def test_expired_registration_evidence_refused(self):
+        # Mutate the registration adapter to simulate expired evidence for Agent A
+        old_adapter = self.server_b.gate.trusted_registration_adapter
+        def expired_adapter(query):
+            decision = old_adapter(query)
+            if decision and decision.get("agentRef") == "agent-a":
+                # Must be after observation otherwise EVIDENCE_EXPIRY_NOT_AFTER_OBSERVATION
+                # Set observed to 2000-01-01 and expiry to 2000-01-02
+                decision["decisionObservedAtUtc"] = "2000-01-01T00:00:00Z"
+                decision["evidenceExpiresAtUtc"] = "2000-01-02T00:00:00Z"
+            return decision
+        self.server_b.gate.trusted_registration_adapter = expired_adapter
+        
+        req = create_envelope_request("agent-a", "agent-b", 1, "msg-expired", "Let me in", session_id="session-exchange-1")
+        status, resp = self.rpc(self.server_b, req, cred="fixture-caller-a")
+        self.assertEqual(status, 400)
+        self.assertIn("REGISTRATION_EVIDENCE_EXPIRED", resp["error"]["message"])
 
     def test_exchange_enforces_zero_execution_authority(self):
         req = create_envelope_request("agent-a", "agent-b", 1, "msg-x1", "Execute this", session_id="session-zero-exec-1")
@@ -389,17 +434,17 @@ class A2AExchangeTests(unittest.TestCase):
 
             # C sends to D (Sequence 1)
             req_1 = create_envelope_request("agent-a", "agent-b", 1, "msg-1", "Initial", session_id="session-exchange-1")
-            status_1, resp_1 = self.rpc(server_d, req_1)
+            status_1, resp_1 = self.rpc(server_d, req_1, cred="fixture-caller-a")
             self.assertEqual(status_1, 200)
             ack_msg_id = resp_1["result"]["message"]["messageId"]
 
             # C's own loopback records the outbound Seq 1 locally
-            status_c1, _ = self.rpc(server_c, req_1)
+            status_c1, _ = self.rpc(server_c, req_1, cred="fixture-caller-a")
             self.assertEqual(status_c1, 200)
 
             # D replies to C (Sequence 2)
             req_2 = create_envelope_request("agent-b", "agent-a", 2, "msg-2", f"In reply to {ack_msg_id}", session_id="session-exchange-1")
-            status_2, resp_2 = self.rpc(server_c, req_2)
+            status_2, resp_2 = self.rpc(server_c, req_2, cred="fixture-caller-b")
             self.assertEqual(status_2, 200)
 
         finally:
