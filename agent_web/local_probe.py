@@ -213,11 +213,18 @@ class Journal:
                 
             if "envelopeState" in event:
                 state = event["envelopeState"]
-                if not isinstance(state, dict):
+                if not isinstance(state, dict) or set(state) != {"sessionId", "sequence", "metadataHash"}:
                     raise Refusal("invalid envelope state")
-                session_id = state.get("sessionId")
-                seq = state.get("sequence")
-                meta_hash = state.get("metadataHash")
+                session_id = state["sessionId"]
+                seq = state["sequence"]
+                meta_hash = state["metadataHash"]
+                if not isinstance(session_id, str) or not session_id:
+                    raise Refusal("invalid envelope state sessionId")
+                if type(seq) is not int or seq <= 0:
+                    raise Refusal("invalid envelope state sequence")
+                if not isinstance(meta_hash, str) or not meta_hash:
+                    raise Refusal("invalid envelope state metadataHash")
+                    
                 session = self._sessions.get(session_id)
                 if not session:
                     raise Refusal("journal references unprovisioned session")
@@ -349,7 +356,11 @@ class LocalHandler(BaseHTTPRequestHandler):
             message_id, env_dict = _request_parts(request)
             
             if env_dict is not None:
-                session_id = env_dict.get("metadata", {}).get("sessionId")
+                metadata = env_dict.get("metadata")
+                if not isinstance(metadata, dict):
+                    raise Refusal("envelope missing or invalid metadata")
+                    
+                session_id = metadata.get("sessionId")
                 if not isinstance(session_id, str):
                     raise Refusal("invalid or missing sessionId")
                     

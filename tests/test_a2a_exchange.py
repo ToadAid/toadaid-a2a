@@ -150,6 +150,75 @@ class A2AExchangeTests(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_exchange_rejects_malformed_envelope_metadata(self):
+        req = create_envelope_request("agent-a", "agent-b", 1, "msg-1", "Hello")
+        
+        # Missing metadata
+        del req["params"]["envelope"]["metadata"]
+        status, resp = self.rpc(self.server_b, req)
+        self.assertEqual(status, 400)
+        self.assertIn("envelope missing or invalid metadata", resp["error"]["message"])
+        
+        # Invalid metadata type
+        req["params"]["envelope"]["metadata"] = ["not a dict"]
+        status2, resp2 = self.rpc(self.server_b, req)
+        self.assertEqual(status2, 400)
+        self.assertIn("envelope missing or invalid metadata", resp2["error"]["message"])
+        
+        # Missing sessionId
+        req["params"]["envelope"]["metadata"] = {"protocolVersion": "a2a-p1a-v0"}
+        status3, resp3 = self.rpc(self.server_b, req)
+        self.assertEqual(status3, 400)
+        self.assertIn("invalid or missing sessionId", resp3["error"]["message"])
+        
+        # Null sessionId
+        req["params"]["envelope"]["metadata"] = {"protocolVersion": "a2a-p1a-v0", "sessionId": None}
+        status4, resp4 = self.rpc(self.server_b, req)
+        self.assertEqual(status4, 400)
+        self.assertIn("invalid or missing sessionId", resp4["error"]["message"])
+
+    def test_journal_recovery_rejects_malformed_envelope_state(self):
+        req_1 = create_envelope_request("agent-a", "agent-b", 1, "msg-rec-mal", "Initial", session_id="session-exchange-1")
+        self.rpc(self.server_b, req_1)
+
+        self.server_b.shutdown()
+        self.thread_b.join(timeout=2)
+        self.server_b.server_close()
+        self.journal_b.close()
+        
+        path = self.dir_b / "local-probe-events.jsonl"
+        raw = path.read_bytes()
+        
+        import hashlib
+        # We need to manually fix the digest since we are tampering with the payload
+        def tamper_journal(find_bytes, replace_bytes):
+            tampered_str = raw.replace(find_bytes, replace_bytes)
+            # Recompute digest for the tampered jsonl
+            try:
+                event = json.loads(tampered_str)
+                payload_keys = [k for k in ("messageId", "requestHash", "response", "prev", "envelopeState") if k in event]
+                payload = {k: event[k] for k in payload_keys}
+                expected = hashlib.sha256(_canonical_json(payload)).hexdigest()
+                event["digest"] = expected
+                return _canonical_json(event) + b"\n"
+            except Exception:
+                return tampered_str
+
+        # 1. Invalid sequence type (boolean instead of int)
+        bad_seq = tamper_journal(b'"sequence":1', b'"sequence":true')
+        path.write_bytes(bad_seq)
+        with self.assertRaisesRegex(Exception, "invalid envelope state sequence"):
+            Journal(self.dir_b)
+            
+        # 2. Missing metadataHash
+        bad_hash = tamper_journal(b'"metadataHash"', b'"missingHash"')
+        path.write_bytes(bad_hash)
+        with self.assertRaisesRegex(Exception, "invalid envelope state"):
+            Journal(self.dir_b)
+            
+        # Restore for teardown
+        path.write_bytes(raw)
+
     def test_journal_recovery_reconstructs_sequence_and_replay(self):
         req_1 = create_envelope_request("agent-a", "agent-b", 1, "msg-rec-1", "Initial", session_id="session-exchange-1")
         status_1, resp_1 = self.rpc(self.server_b, req_1)
