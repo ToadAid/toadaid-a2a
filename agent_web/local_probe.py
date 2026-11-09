@@ -59,6 +59,7 @@ def _valid_id(value):
 
 from agent_web.envelope import validate_envelope, EnvelopeRefusal
 from admission.gate import (
+    ADAPTER_ID_MAX_CHARS,
     RegisteredAgentGate,
     synthetic_caller_credential,
     synthetic_caller_verifier,
@@ -71,9 +72,17 @@ from admission.lifecycle import synthetic_lifecycle_source
 from observatory.model import ObservatoryRefusal
 import datetime
 
-# Create synthetic gate configuration that admits agent-a and agent-b.
+# Opaque synthetic caller credentials — fixtures, NOT real identities.
 _CRED_A = synthetic_caller_credential("fixture-caller-a")
 _CRED_B = synthetic_caller_credential("fixture-caller-b")
+
+# Explicit mapping of permitted transport-level synthetic bearer tokens to credentials.
+# Only explicitly provisioned labels are accepted; unknown labels are never dynamically created.
+# NOTE: Public fixture strings and synthetic credentials are NOT real authentication secrets.
+_PROVISIONED_CREDENTIALS = {
+    "fixture-caller-a": _CRED_A,
+    "fixture-caller-b": _CRED_B,
+}
 
 _ADMISSION_DECISIONS = {
     "agent-a": {
@@ -473,18 +482,17 @@ class LocalHandler(BaseHTTPRequestHandler):
                 recipient_id = res["envelope"]["metadata"]["recipientAgentId"]
                 
                 # Verify admission gate
-                auth_header = self.headers.get("Authorization", "")
-                if not auth_header.startswith("Bearer "):
+                auth_header = self.headers.get("Authorization")
+                if not auth_header or not auth_header.startswith("Bearer "):
                     raise Refusal("missing or invalid authorization header")
-                cred_label = auth_header[7:]
-                
-                # Retrieve the exact synthetic CallerCredential instance (it lacks __eq__/__hash__ overrides)
-                if cred_label == "fixture-caller-a":
-                    caller_cred = _CRED_A
-                elif cred_label == "fixture-caller-b":
-                    caller_cred = _CRED_B
-                else:
-                    caller_cred = synthetic_caller_credential(cred_label)
+                cred_label = auth_header[7:].strip()
+                if not cred_label:
+                    raise Refusal("empty caller credential")
+                if len(cred_label) > ADAPTER_ID_MAX_CHARS:
+                    raise Refusal("oversized caller credential")
+                if cred_label not in _PROVISIONED_CREDENTIALS:
+                    raise Refusal("unknown or unauthorized caller credential")
+                caller_cred = _PROVISIONED_CREDENTIALS[cred_label]
                 
                 # Synthetic timestamps for evidence bounds checking relative to the gate's clock
                 now_utc = self.server.gate.now().strftime("%Y-%m-%dT%H:%M:%SZ")

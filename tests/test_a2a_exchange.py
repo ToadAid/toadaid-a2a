@@ -148,11 +148,15 @@ class A2AExchangeTests(unittest.TestCase):
         
         self.tmp.cleanup()
 
-    def rpc(self, server, payload, cred="fixture-caller-a"):
+    def rpc(self, server, payload, cred="fixture-caller-a", headers=None):
         conn = http.client.HTTPConnection("127.0.0.1", server.server_address[1], timeout=2)
         try:
-            conn.request("POST", RPC_PATH, json.dumps(payload).encode(),
-                         {"Content-Type": "application/json", "A2A-Version": "1.0", "Authorization": f"Bearer {cred}"})
+            req_headers = {"Content-Type": "application/json", "A2A-Version": "1.0"}
+            if cred is not None:
+                req_headers["Authorization"] = f"Bearer {cred}"
+            if headers:
+                req_headers.update(headers)
+            conn.request("POST", RPC_PATH, json.dumps(payload).encode(), req_headers)
             response = conn.getresponse()
             data = json.loads(response.read())
             return response.status, data
@@ -295,11 +299,39 @@ class A2AExchangeTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn("CALLER_IDENTITY_MISMATCH", resp["error"]["message"])
         
-    def test_missing_or_unknown_credential_refused(self):
-        req = create_envelope_request("agent-a", "agent-b", 1, "msg-noauth", "Hello", session_id="session-exchange-1")
-        status, resp = self.rpc(self.server_b, req, cred="unknown_caller")
+    def test_missing_credential_refused_no_advance(self):
+        req = create_envelope_request("agent-a", "agent-b", 1, "msg-missing-cred", "Hello", session_id="session-exchange-1")
+        # No Authorization header
+        status, resp = self.rpc(self.server_b, req, cred=None)
         self.assertEqual(status, 400)
-        self.assertIn("CALLER_NOT_AUTHENTICATED", resp["error"]["message"])
+        self.assertIn("missing or invalid authorization header", resp["error"]["message"])
+        # Sequence and journal must not advance
+        self.assertEqual(self.journal_b.get_session("session-exchange-1")["currentSequence"], 0)
+        self.assertEqual((self.dir_b / "local-probe-events.jsonl").read_bytes(), b"")
+
+    def test_empty_credential_refused_no_advance(self):
+        req = create_envelope_request("agent-a", "agent-b", 1, "msg-empty-cred", "Hello", session_id="session-exchange-1")
+        status, resp = self.rpc(self.server_b, req, cred="")
+        self.assertEqual(status, 400)
+        self.assertIn("empty caller credential", resp["error"]["message"])
+        self.assertEqual(self.journal_b.get_session("session-exchange-1")["currentSequence"], 0)
+        self.assertEqual((self.dir_b / "local-probe-events.jsonl").read_bytes(), b"")
+
+    def test_unknown_credential_refused_no_advance(self):
+        req = create_envelope_request("agent-a", "agent-b", 1, "msg-unknown-cred", "Hello", session_id="session-exchange-1")
+        status, resp = self.rpc(self.server_b, req, cred="unknown-unprovisioned-caller")
+        self.assertEqual(status, 400)
+        self.assertIn("unknown or unauthorized caller credential", resp["error"]["message"])
+        self.assertEqual(self.journal_b.get_session("session-exchange-1")["currentSequence"], 0)
+        self.assertEqual((self.dir_b / "local-probe-events.jsonl").read_bytes(), b"")
+
+    def test_oversized_credential_refused_no_advance(self):
+        req = create_envelope_request("agent-a", "agent-b", 1, "msg-oversized-cred", "Hello", session_id="session-exchange-1")
+        status, resp = self.rpc(self.server_b, req, cred="x" * 200)
+        self.assertEqual(status, 400)
+        self.assertIn("oversized caller credential", resp["error"]["message"])
+        self.assertEqual(self.journal_b.get_session("session-exchange-1")["currentSequence"], 0)
+        self.assertEqual((self.dir_b / "local-probe-events.jsonl").read_bytes(), b"")
 
     def test_revoked_or_suspended_agent_refused(self):
         # Mutate the trusted lifecycle source in Agent B's gate to simulate Agent A suspension
