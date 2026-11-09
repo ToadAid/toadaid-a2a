@@ -214,10 +214,16 @@ class TestA2AEnvelopeEngine(unittest.TestCase):
         
         barrier = threading.Barrier(2)
         
-        def racin_validator():
+        def barrier_verifier(metadata, signature, sender_id):
+            # This ensures both threads complete all JSON parsing and stateless validation
+            # before simultaneously racing for the check-and-record phase.
+            res = mock_trust_framework_verifier(metadata, signature, sender_id)
             barrier.wait(timeout=2)
+            return res
+            
+        def racin_validator():
             try:
-                return validate_envelope(env_bytes, self.session, mock_trust_framework_verifier, self.current_time_ms)
+                return validate_envelope(env_bytes, self.session, barrier_verifier, self.current_time_ms)
             except EnvelopeRefusal as e:
                 return e
 
@@ -240,6 +246,15 @@ class TestA2AEnvelopeEngine(unittest.TestCase):
         err_str = str(failures[0])
         self.assertTrue("IDEMPOTENT_REPLAY" in err_str or "OUT_OF_ORDER_SEQUENCE" in err_str or "CONCURRENT_SEQUENCE_ADVANCE" in err_str)
         self.assertEqual(self.session["currentSequence"], 1)
+
+    def test_session_manifest_remains_json_serializable(self):
+        # To verify locking changes didn't corrupt serializability
+        env_bytes = self.create_envelope(meta_overrides={"messageId": "msg-1", "sequence": 1})
+        validate_envelope(env_bytes, self.session, mock_trust_framework_verifier, self.current_time_ms)
+        try:
+            json.dumps(self.session)
+        except Exception as e:
+            self.fail(f"Session manifest is not JSON serializable after validation: {e}")
 
 if __name__ == "__main__":
     unittest.main()

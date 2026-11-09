@@ -17,7 +17,10 @@ Security Invariants enforced:
 
 import hashlib
 import json
+import threading
 import time
+
+_ENVELOPE_STATE_LOCK = threading.Lock()
 
 MAX_ENVELOPE_BYTES = 131072  # 128KB absolute ceiling
 MAX_STRING_LENGTH = 1024
@@ -210,12 +213,8 @@ def validate_envelope(
         raise EnvelopeRefusal("INVALID_SIGNATURE")
 
     # 8. Check-and-Record (State Mutation)
-    import threading
-    
     # Process-local thread synchronization; durable process/restart safety requires persistence.
-    session_lock = session_manifest.setdefault("_lock", threading.Lock())
-    
-    with session_lock:
+    with _ENVELOPE_STATE_LOCK:
         # Fail fast if another caller advanced sequence or inserted id while we authenticated
         if session_manifest.get("currentSequence", 0) != seq - 1:
             raise EnvelopeRefusal("CONCURRENT_SEQUENCE_ADVANCE")
