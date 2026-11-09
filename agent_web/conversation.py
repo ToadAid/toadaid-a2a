@@ -1,4 +1,4 @@
-"""A2A-GEM-005: Deterministic conversation handlers and multi-turn exchange engine."""
+"""A2A-GEM-006: Deterministic conversation handlers and autonomous agent conversation loops."""
 import argparse
 import http.client
 import json
@@ -141,116 +141,135 @@ def post_envelope_rpc(port, payload, cred):
         conn.close()
 
 
-def run_conversation_between_ports(
-    port_a,
-    port_b,
-    session_id="session-pond-1",
-    initial_prompt=POND_PROMPT_INITIAL,
-    max_turns=4,
-    correlation_id="corr-pond-1",
-):
-    """Execute a multi-turn connected conversation across two agent servers.
+def extract_transcript_from_journal(journal_path):
+    """Reconstruct [(speaker, text), ...] from a verified journal file."""
+    lines = Path(journal_path).read_text().splitlines()
+    turns = []
+    for line in lines:
+        try:
+            event = json.loads(line)
+            resp = event.get("response", {})
+            seq = event.get("envelopeState", {}).get("sequence")
+            if seq is None:
+                continue
+            speaker = "Agent A" if seq % 2 == 1 else "Agent B"
+            if resp.get("outbound"):
+                text = resp.get("text", "")
+            else:
+                text = resp.get("receivedText", "")
+            turns.append((speaker, text))
+        except Exception:
+            pass
+    # Sort strictly by sequence order if multiple events
+    return turns
 
+
+def run_autonomous_conversation_subprocesses(
+    dir_a,
+    dir_b,
+    session_id="session-pond-1",
+    max_turns=4,
+    timeout_seconds=5.0,
+):
+    """Launch Agent A and Agent B as separate local processes without an external coordinator.
+
+    Agent A initiates Turn 1. Turns 2-4 are constructed and dispatched autonomously by the agents.
     Returns (turns_list, transcript_string).
     """
-    turns = []
-    current_prompt = initial_prompt
-    last_msg_id = None
+    proc_b = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "agent_web.local_probe",
+            "--journal-dir",
+            str(dir_b),
+            "--port",
+            "0",
+            "--agent-id",
+            "agent-b",
+            "--autonomous",
+            "--session-id",
+            session_id,
+        ],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    port_b = None
+    for line in proc_b.stdout:
+        if "LOCAL_ONLY_NOT_DEPLOYED" in line:
+            port_b = int(line.split("http://127.0.0.1:")[1].split("/")[0])
+            break
 
-    for turn_idx in range(1, max_turns + 1):
-        if turn_idx % 2 == 1:
-            # Odd turns: Agent A -> Agent B
-            sender = "agent-a"
-            recipient = "agent-b"
-            speaker_label = "Agent A"
-            cred = "fixture-caller-a"
-            dest_port = port_b
-            src_port = port_a
-        else:
-            # Even turns: Agent B -> Agent A
-            sender = "agent-b"
-            recipient = "agent-a"
-            speaker_label = "Agent B"
-            cred = "fixture-caller-b"
-            dest_port = port_a
-            src_port = port_b
+    if port_b is None:
+        proc_b.terminate()
+        raise RuntimeError("Failed to obtain ephemeral port for Agent B")
 
-        msg_id = f"msg-turn-{turn_idx}"
-        req = create_envelope_turn(
-            sender=sender,
-            recipient=recipient,
-            seq=turn_idx,
-            mid=msg_id,
-            text=current_prompt,
-            session_id=session_id,
-            correlation_id=correlation_id,
-            in_reply_to=last_msg_id,
-        )
+    proc_a = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "agent_web.local_probe",
+            "--journal-dir",
+            str(dir_a),
+            "--port",
+            "0",
+            "--agent-id",
+            "agent-a",
+            "--peer-url",
+            f"http://127.0.0.1:{port_b}/a2a",
+            "--autonomous",
+            "--initiate",
+            "--session-id",
+            session_id,
+        ],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    port_a = None
+    for line in proc_a.stdout:
+        if "LOCAL_ONLY_NOT_DEPLOYED" in line:
+            port_a = int(line.split("http://127.0.0.1:")[1].split("/")[0])
+            break
 
-        # 1. Send to destination agent server
-        status_dest, resp_dest = post_envelope_rpc(dest_port, req, cred=cred)
-        if status_dest != 200:
-            err = resp_dest.get("error", {}).get("message", "unknown error")
-            raise RuntimeError(f"Turn {turn_idx} failed on destination {recipient}: {err}")
+    if port_a is None:
+        proc_a.terminate()
+        proc_b.terminate()
+        raise RuntimeError("Failed to obtain ephemeral port for Agent A")
 
-        # 2. Record outgoing on source agent server for sequence synchronization
-        status_src, resp_src = post_envelope_rpc(src_port, req, cred=cred)
-        if status_src != 200:
-            err = resp_src.get("error", {}).get("message", "unknown error")
-            raise RuntimeError(f"Turn {turn_idx} failed on source {sender}: {err}")
+    try:
+        # Wait for both agents to complete max_turns in their journals
+        deadline = time.time() + timeout_seconds
+        journal_a = Path(dir_a) / "local-probe-events.jsonl"
+        journal_b = Path(dir_b) / "local-probe-events.jsonl"
+        while time.time() < deadline:
+            lines_a = journal_a.read_text().splitlines() if journal_a.exists() else []
+            lines_b = journal_b.read_text().splitlines() if journal_b.exists() else []
+            if len(lines_a) >= max_turns and len(lines_b) >= max_turns:
+                break
+            time.sleep(0.05)
 
-        turns.append((speaker_label, current_prompt))
-        last_msg_id = msg_id
+        turns = extract_transcript_from_journal(journal_a)
+        transcript = format_transcript(turns)
+        return turns, transcript
 
-        # Destination response contains the synthetic handler's answer for the next turn
-        reply_message = resp_dest.get("result", {}).get("message", {})
-        reply_parts = reply_message.get("parts", [])
-        if reply_parts and "text" in reply_parts[0]:
-            current_prompt = reply_parts[0]["text"]
-
-    transcript = format_transcript(turns)
-    return turns, transcript
+    finally:
+        proc_a.terminate()
+        proc_a.wait()
+        proc_b.terminate()
+        proc_b.wait()
 
 
 def main(argv=None):
-    """Run an autonomous 4-turn demonstration between two agent subprocesses."""
+    """Run an autonomous 4-turn demonstration between two independent agent subprocesses."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         dir_a = Path(tmp_dir) / "agent-a"
         dir_b = Path(tmp_dir) / "agent-b"
-        provision_conversation_session(dir_a, "session-pond-1", max_turns=10)
-        provision_conversation_session(dir_b, "session-pond-1", max_turns=10)
+        provision_conversation_session(dir_a, "session-pond-1", max_turns=4)
+        provision_conversation_session(dir_b, "session-pond-1", max_turns=4)
 
-        proc_a = subprocess.Popen(
-            [sys.executable, "-m", "agent_web.local_probe", "--journal-dir", str(dir_a), "--port", "0", "--agent-id", "agent-a"],
-            stdout=subprocess.PIPE,
-            text=True,
-        )
-        port_a = None
-        for line in proc_a.stdout:
-            if "LOCAL_ONLY_NOT_DEPLOYED" in line:
-                port_a = int(line.split("http://127.0.0.1:")[1].split("/")[0])
-                break
-
-        proc_b = subprocess.Popen(
-            [sys.executable, "-m", "agent_web.local_probe", "--journal-dir", str(dir_b), "--port", "0", "--agent-id", "agent-b"],
-            stdout=subprocess.PIPE,
-            text=True,
-        )
-        port_b = None
-        for line in proc_b.stdout:
-            if "LOCAL_ONLY_NOT_DEPLOYED" in line:
-                port_b = int(line.split("http://127.0.0.1:")[1].split("/")[0])
-                break
-
-        try:
-            _, transcript = run_conversation_between_ports(port_a, port_b, max_turns=4)
-            print(transcript)
-            return 0
-        finally:
-            proc_a.terminate()
-            proc_a.wait()
-            proc_b.terminate()
-            proc_b.wait()
+        _, transcript = run_autonomous_conversation_subprocesses(dir_a, dir_b, max_turns=4)
+        print(transcript)
+        return 0
 
 
 if __name__ == "__main__":

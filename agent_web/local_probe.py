@@ -13,6 +13,9 @@ import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 import stat
+import threading
+import time
+from urllib.parse import urlsplit
 import uuid
 
 MAX_REQUEST_BYTES = 8192
@@ -210,6 +213,26 @@ def _request_parts(request):
     return message_id, None
 
 
+def validate_destination_url(url):
+    """Refuse unknown or non-loopback destinations."""
+    if not isinstance(url, str):
+        raise Refusal("destination URL must be a string")
+    try:
+        parsed = urlsplit(url)
+    except Exception as exc:
+        raise Refusal("invalid destination URL") from exc
+
+    if parsed.scheme != "http" or parsed.hostname != "127.0.0.1":
+        raise Refusal("destination must be explicit loopback http://127.0.0.1:<port>/a2a")
+    if parsed.username or parsed.password:
+        raise Refusal("userinfo in destination URL refused")
+    if parsed.port is None or not (0 < parsed.port <= 65535):
+        raise Refusal("destination must specify a valid port")
+    if parsed.path.rstrip("/") != RPC_PATH:
+        raise Refusal("invalid RPC destination path")
+    return url
+
+
 def _extract_conversation_text(content_parts):
     """Extract and strictly validate text part when a conversation handler is active.
 
@@ -365,7 +388,7 @@ class Journal:
             self._seen[message_id] = (event["requestHash"], event["response"])
             self._last_hash = expected
 
-    def response_for(self, request, message_id, envelope_state=None, reply_text=None):
+    def response_for(self, request, message_id, envelope_state=None, reply_text=None, incoming_text=None):
         if self._poisoned:
             raise Refusal("journal not available after write failure")
             
@@ -384,6 +407,8 @@ class Journal:
         text_content = reply_text if reply_text is not None else ACK
         answer = {"message": {"messageId": str(uuid.uuid4()), "contextId": str(uuid.uuid4()),
                               "role": "ROLE_AGENT", "parts": [{"text": text_content, "mediaType": "text/plain"}]}}
+        if incoming_text is not None:
+            answer["receivedText"] = incoming_text
         event = {"messageId": message_id, "requestHash": request_hash,
                  "response": answer, "prev": self._last_hash}
         if envelope_state:
@@ -408,6 +433,73 @@ class Journal:
         self._seen[message_id] = (request_hash, answer)
         return answer
 
+    def record_outbound(self, session_id, envelope, metadata_hash=None):
+        """Legitimate local outgoing-state mechanism: records outbound envelope in session and journal."""
+        if self._poisoned:
+            raise Refusal("journal not available after write failure")
+
+        metadata = envelope.get("metadata", {})
+        message_id = metadata.get("messageId")
+        seq = metadata.get("sequence")
+        if not isinstance(message_id, str) or not message_id:
+            raise Refusal("invalid outbound messageId")
+        if type(seq) is not int or seq <= 0:
+            raise Refusal("invalid outbound sequence")
+
+        session = self.get_session(session_id)
+        if not session:
+            raise Refusal("session not provisioned")
+        if session.get("state") != "OPEN":
+            raise Refusal("session not open")
+        if seq != session.get("currentSequence", 0) + 1:
+            raise Refusal("outbound sequence out of order")
+        if seq > session.get("maxTurns", 0):
+            raise Refusal("max turns exceeded")
+
+        from agent_web.envelope import _hash_metadata
+        if metadata_hash is None:
+            metadata_hash = _hash_metadata(metadata)
+
+        envelope_state = {
+            "sessionId": session_id,
+            "sequence": seq,
+            "metadataHash": metadata_hash,
+        }
+
+        request_hash = hashlib.sha256(_canonical(envelope)).hexdigest()
+        content_parts = envelope.get("contentParts", {})
+        text_content = content_parts.get("text", "") if isinstance(content_parts, dict) else ""
+        answer = {"outbound": True, "messageId": message_id, "text": text_content}
+        event = {
+            "messageId": message_id,
+            "requestHash": request_hash,
+            "response": answer,
+            "prev": self._last_hash,
+            "envelopeState": envelope_state,
+        }
+
+        payload_keys = [k for k in ("messageId", "requestHash", "response", "prev", "envelopeState") if k in event]
+        payload = {k: event[k] for k in payload_keys}
+        digest = hashlib.sha256(_canonical(payload)).hexdigest()
+        event["digest"] = digest
+        line = _canonical(event) + b"\n"
+
+        if os.fstat(self._fd).st_size + len(line) > MAX_JOURNAL_BYTES:
+            raise Refusal("journal size bound exceeded")
+        try:
+            if os.write(self._fd, line) != len(line):
+                raise OSError("partial journal write")
+            os.fsync(self._fd)
+        except OSError as exc:
+            self._poisoned = True
+            raise Refusal("journal write refused") from exc
+
+        self._last_hash = digest
+        self._seen[message_id] = (request_hash, answer)
+        session["currentSequence"] = seq
+        session.setdefault("seenMessageIds", {})[message_id] = metadata_hash
+        return event
+
     def close(self):
         if not self._closed:
             os.close(self._fd)
@@ -422,14 +514,97 @@ class LocalServer(HTTPServer):
         connection.settimeout(3.0)
         return connection, address
 
-    def __init__(self, journal, port=0, gate=None, handler=None):
+    def __init__(
+        self,
+        journal,
+        port=0,
+        gate=None,
+        handler=None,
+        agent_id=None,
+        peer_url=None,
+        autonomous=False,
+    ):
         self.journal = journal
         self.gate = gate if gate is not None else build_synthetic_gate()
         self.handler = handler
+        self.agent_id = agent_id
+        self.peer_url = peer_url
+        self.autonomous = autonomous
+        self.transcript = []
         super().__init__(("127.0.0.1", port), LocalHandler)
         if self.server_address[0] != "127.0.0.1":
             self.server_close()
             raise Refusal("server binding escaped loopback")
+
+    def send_outbound_turn(
+        self,
+        session_id,
+        text,
+        seq,
+        recipient_id,
+        in_reply_to=None,
+        correlation_id="corr-pond-1",
+        dest_url=None,
+    ):
+        if not self.agent_id:
+            raise Refusal("server has no configured agent_id for outbound sends")
+        url = dest_url or self.peer_url
+        if not url:
+            raise Refusal("no destination URL configured")
+
+        validated_url = validate_destination_url(url)
+
+        from agent_web.conversation import create_envelope_turn, post_envelope_rpc
+
+        msg_id = f"msg-{self.agent_id}-turn-{seq}"
+        req = create_envelope_turn(
+            sender=self.agent_id,
+            recipient=recipient_id,
+            seq=seq,
+            mid=msg_id,
+            text=text,
+            session_id=session_id,
+            correlation_id=correlation_id,
+            in_reply_to=in_reply_to,
+        )
+
+        own_port = self.server_address[1]
+        req["params"]["envelope"]["metadata"]["replyToUrl"] = f"http://127.0.0.1:{own_port}/a2a"
+
+        cred = "fixture-caller-a" if self.agent_id == "agent-a" else "fixture-caller-b"
+
+        # Record outbound in local journal
+        self.journal.record_outbound(session_id, req["params"]["envelope"])
+        speaker_label = "Agent A" if self.agent_id == "agent-a" else "Agent B"
+        self.transcript.append((speaker_label, text))
+
+        parsed = urlsplit(validated_url)
+        try:
+            status, resp = post_envelope_rpc(parsed.port, req, cred=cred)
+        except Exception as exc:
+            raise Refusal(f"outbound delivery failed: {exc}") from exc
+            
+        if status != 200:
+            err = resp.get("error", {}).get("message", "outbound delivery refused")
+            raise Refusal(f"outbound delivery failed: {err}")
+        return status, resp
+
+    def initiate_conversation(
+        self,
+        session_id="session-pond-1",
+        prompt_text=None,
+        recipient_id="agent-b",
+        dest_url=None,
+    ):
+        from agent_web.conversation import POND_PROMPT_INITIAL
+        text = prompt_text if prompt_text is not None else POND_PROMPT_INITIAL
+        return self.send_outbound_turn(
+            session_id=session_id,
+            text=text,
+            seq=1,
+            recipient_id=recipient_id,
+            dest_url=dest_url,
+        )
 
 
 class LocalHandler(BaseHTTPRequestHandler):
@@ -527,11 +702,12 @@ class LocalHandler(BaseHTTPRequestHandler):
                 # Synthetic timestamps for evidence bounds checking relative to the gate's clock
                 now_utc = self.server.gate.now().strftime("%Y-%m-%dT%H:%M:%SZ")
                 
+                correlation_id = metadata.get("correlationId", "corr-test")
                 sender_request = {
                     "agentRef": sender_id, "tenantRef": "tenant-alpha",
                     "ownerRef": "owner-alpha" if sender_id == "agent-a" else "owner-beta",
                     "participationScope": "a2a-message-send",
-                    "messageId": message_id, "correlationId": "corr-test",
+                    "messageId": message_id, "correlationId": correlation_id,
                     "occurredAtUtc": now_utc,
                     "message": {"messageType": "conversation_message", "body": "x"}
                 }
@@ -552,14 +728,25 @@ class LocalHandler(BaseHTTPRequestHandler):
                 
                 # Check for prompt-dependent conversation handler
                 reply_text = None
+                incoming_text = ""
                 if getattr(self.server, "handler", None) is not None:
                     incoming_text = _extract_conversation_text(env_dict.get("contentParts"))
                     reply_text = self.server.handler(incoming_text, sender_id, recipient_id)
                 
-                response = self.server.journal.response_for(request, message_id, envelope_state, reply_text=reply_text)
+                response = self.server.journal.response_for(
+                    request,
+                    message_id,
+                    envelope_state,
+                    reply_text=reply_text,
+                    incoming_text=incoming_text if env_dict is not None else None,
+                )
                 
                 # Atomic state commit upon successful journal write
                 session_manifest.update(test_manifest)
+                
+                # Record in server transcript
+                speaker_label = "Agent A" if sender_id == "agent-a" else "Agent B"
+                self.server.transcript.append((speaker_label, incoming_text))
             else:
                 response = self.server.journal.response_for(request, message_id)
                 
@@ -567,7 +754,31 @@ class LocalHandler(BaseHTTPRequestHandler):
             self._send(400, {"jsonrpc": "2.0", "id": None,
                              "error": {"code": -32602, "message": str(exc)}})
             return
+            
         self._send(200, {"jsonrpc": "2.0", "id": request["id"], "result": response})
+        
+        # Autonomous conversation loop: send next outbound turn if configured
+        if env_dict is not None and getattr(self.server, "autonomous", False):
+            turn_idx = res["envelope"]["metadata"]["sequence"]
+            max_turns = session_manifest.get("maxTurns", 0)
+            if turn_idx < max_turns and reply_text:
+                reply_to_url = env_dict.get("metadata", {}).get("replyToUrl") or getattr(self.server, "peer_url", None)
+                if reply_to_url:
+                    def dispatch_next():
+                        time.sleep(0.01)
+                        try:
+                            self.server.send_outbound_turn(
+                                session_id=session_id,
+                                text=reply_text,
+                                seq=turn_idx + 1,
+                                recipient_id=sender_id,
+                                in_reply_to=message_id,
+                                correlation_id=correlation_id,
+                                dest_url=reply_to_url
+                            )
+                        except Exception:
+                            pass
+                    threading.Thread(target=dispatch_next, daemon=True).start()
 
     def do_PUT(self):
         self._send(405, {"error": "method not allowed"})
@@ -584,13 +795,36 @@ def main(argv=None):
     parser.add_argument("--port", type=int, default=0, help="loopback port; 0 chooses free ephemeral port")
     parser.add_argument("--agent-id", choices=["agent-a", "agent-b"], default=None,
                         help="synthetic agent personality for conversation demonstration")
+    parser.add_argument("--peer-url", type=str, default=None,
+                        help="loopback endpoint of peer agent")
+    parser.add_argument("--autonomous", action="store_true",
+                        help="enable autonomous multi-turn conversation response loop")
+    parser.add_argument("--initiate", action="store_true",
+                        help="initiate conversation upon startup")
+    parser.add_argument("--session-id", default="session-pond-1",
+                        help="conversation session ID")
     options = parser.parse_args(argv)
     journal = Journal(options.journal_dir)
     handler = CONVERSATION_HANDLERS.get(options.agent_id) if options.agent_id else None
     try:
-        with LocalServer(journal, options.port, handler=handler) as server:
+        with LocalServer(
+            journal,
+            options.port,
+            handler=handler,
+            agent_id=options.agent_id,
+            peer_url=options.peer_url,
+            autonomous=options.autonomous,
+        ) as server:
             print("LOCAL_ONLY_NOT_DEPLOYED http://127.0.0.1:%d%s" % (server.server_address[1], CARD_PATH),
                   flush=True)
+            if options.initiate:
+                def do_init():
+                    time.sleep(0.05)
+                    try:
+                        server.initiate_conversation(session_id=options.session_id, dest_url=options.peer_url)
+                    except Exception:
+                        pass
+                threading.Thread(target=do_init, daemon=True).start()
             server.serve_forever(poll_interval=0.05)
     finally:
         journal.close()
