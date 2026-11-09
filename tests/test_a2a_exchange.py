@@ -101,6 +101,15 @@ def provision_sessions_file(journal_dir):
             "maxTurns": 1000,
             "currentSequence": 0,
             "seenMessageIds": {}
+        },
+        "session-unreg-1": {
+            "sessionId": "session-unreg-1",
+            "state": "OPEN",
+            "participants": {"agent-unregistered": {"agentId": "agent-unregistered"}, "agent-b": {"agentId": "agent-b"}},
+            "maxMessageBytes": 8192,
+            "maxTurns": 1000,
+            "currentSequence": 0,
+            "seenMessageIds": {}
         }
     }
     (journal_dir / "sessions.json").write_text(json.dumps(sessions_data))
@@ -272,6 +281,12 @@ class A2AExchangeTests(unittest.TestCase):
         req_3 = create_envelope_request("agent-a", "agent-b", 3, "msg-3", "Acknowledge reply")
         status_3, resp_3 = self.rpc(self.server_b, req_3)
         self.assertEqual(status_3, 200)
+
+    def test_unregistered_agent_is_refused_admission(self):
+        req_unreg = create_envelope_request("agent-unregistered", "agent-b", 1, "msg-unreg", "Hello from unknown", session_id="session-unreg-1")
+        status_unreg, resp_unreg = self.rpc(self.server_b, req_unreg)
+        self.assertEqual(status_unreg, 400)
+        self.assertIn("agent admission gate refused participation", resp_unreg["error"]["message"])
 
     def test_exchange_enforces_zero_execution_authority(self):
         req = create_envelope_request("agent-a", "agent-b", 1, "msg-x1", "Execute this", session_id="session-zero-exec-1")

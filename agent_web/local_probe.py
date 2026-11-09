@@ -58,11 +58,109 @@ def _valid_id(value):
 
 
 from agent_web.envelope import validate_envelope, EnvelopeRefusal
+from admission.gate import (
+    RegisteredAgentGate,
+    synthetic_caller_credential,
+    synthetic_caller_verifier,
+    synthetic_registration_adapter,
+    AdmissionJournal,
+    ParticipationRefused,
+    AdmissionRefused
+)
+from admission.lifecycle import synthetic_lifecycle_source
+from observatory.model import ObservatoryRefusal
+import datetime
+
+# Create synthetic gate configuration that admits agent-a and agent-b.
+_CRED_A = synthetic_caller_credential("fixture-caller-a")
+_CRED_B = synthetic_caller_credential("fixture-caller-b")
+
+_ADMISSION_DECISIONS = {
+    "agent-a": {
+        "kind": "toadaid-a2a-registration-decision",
+        "agentRef": "agent-a", "tenantRef": "tenant-alpha", "ownerRef": "owner-alpha",
+        "registrationStatus": "registered", "credentialGeneration": 1, "revocationEpoch": 1,
+        "framework": "unspecified", "adapterId": "synthetic-offline-registration-adapter",
+        "decisionObservedAtUtc": "2026-11-09T00:00:00Z", "evidenceExpiresAtUtc": "2026-11-09T01:00:00Z",
+        "participationScopes": ["a2a-message-receive", "a2a-message-send"],
+        "authorityFlags": {
+            "executionAuthorized": False, "toolUseAuthorized": False, "paymentAuthorized": False,
+            "deploymentAuthorized": False, "agentRegistrationChangeAuthorized": False, "publicDirectoryExposed": False
+        }
+    },
+    "agent-b": {
+        "kind": "toadaid-a2a-registration-decision",
+        "agentRef": "agent-b", "tenantRef": "tenant-alpha", "ownerRef": "owner-beta",
+        "registrationStatus": "registered", "credentialGeneration": 1, "revocationEpoch": 1,
+        "framework": "unspecified", "adapterId": "synthetic-offline-registration-adapter",
+        "decisionObservedAtUtc": "2026-11-09T00:00:00Z", "evidenceExpiresAtUtc": "2026-11-09T01:00:00Z",
+        "participationScopes": ["a2a-message-receive", "a2a-message-send"],
+        "authorityFlags": {
+            "executionAuthorized": False, "toolUseAuthorized": False, "paymentAuthorized": False,
+            "deploymentAuthorized": False, "agentRegistrationChangeAuthorized": False, "publicDirectoryExposed": False
+        }
+    }
+}
+
+_LIFECYCLE_STATES = {
+    "agent-a": {
+        "kind": "toadaid-a2a-credential-lifecycle-state",
+        "agentRef": "agent-a", "tenantRef": "tenant-alpha", "ownerRef": "owner-alpha",
+        "lifecycleStatus": "registered", "currentCredentialGeneration": 1, "currentRevocationEpoch": 1,
+        "observedAtUtc": "2026-11-09T00:00:00Z"
+    },
+    "agent-b": {
+        "kind": "toadaid-a2a-credential-lifecycle-state",
+        "agentRef": "agent-b", "tenantRef": "tenant-alpha", "ownerRef": "owner-beta",
+        "lifecycleStatus": "registered", "currentCredentialGeneration": 1, "currentRevocationEpoch": 1,
+        "observedAtUtc": "2026-11-09T00:00:00Z"
+    }
+}
+
+_CALLER_BINDINGS = {
+    _CRED_A: {"agentRef": "agent-a", "tenantRef": "tenant-alpha", "ownerRef": "owner-alpha"},
+    _CRED_B: {"agentRef": "agent-b", "tenantRef": "tenant-alpha", "ownerRef": "owner-beta"}
+}
 
 def strict_synthetic_verifier(metadata, signature, sender_id):
     """Explicitly injected test-only verifier checking expected synthetic credentials."""
     expected = f"synthetic_signature_for_{sender_id}"
     return signature == expected
+
+def _gate_authorized(sender_id, recipient_id, message_id, correlation_id="corr-1"):
+    # Clock fixture that always matches the observation
+    now_fn = lambda: datetime.datetime(2026, 11, 9, 0, 1, 0, tzinfo=datetime.timezone.utc)
+    try:
+        gate = RegisteredAgentGate(
+            trusted_registration_adapter=synthetic_registration_adapter(_ADMISSION_DECISIONS),
+            trusted_caller_verifier=synthetic_caller_verifier(_CALLER_BINDINGS),
+            trusted_lifecycle_source=synthetic_lifecycle_source(_LIFECYCLE_STATES),
+            now=now_fn,
+            journal=AdmissionJournal()
+        )
+        
+        sender_cred = _CRED_A if sender_id == "agent-a" else _CRED_B if sender_id == "agent-b" else None
+        if sender_cred is None:
+            return False
+            
+        sender_request = {
+            "agentRef": sender_id, "tenantRef": "tenant-alpha",
+            "ownerRef": "owner-alpha" if sender_id == "agent-a" else "owner-beta",
+            "participationScope": "a2a-message-send",
+            "messageId": message_id, "correlationId": correlation_id,
+            "occurredAtUtc": "2026-11-09T00:01:00Z",
+            "message": {"messageType": "conversation_message", "body": "x"}
+        }
+        
+        recipient_context = {
+            "agentRef": recipient_id, "tenantRef": "tenant-alpha",
+            "ownerRef": "owner-alpha" if recipient_id == "agent-a" else "owner-beta",
+        }
+        
+        gate.route(sender_request, recipient_context, sender_cred)
+        return True
+    except (ParticipationRefused, AdmissionRefused, ObservatoryRefusal) as e:
+        return False
 
 def _request_parts(request):
     """Conservative subset: validates raw legacy payload or extracts envelope."""
@@ -377,6 +475,13 @@ class LocalHandler(BaseHTTPRequestHandler):
                     raise Refusal(f"envelope refusal: {str(e)}")
                     
                 message_id = res["envelope"]["metadata"]["messageId"]
+                sender_id = res["envelope"]["metadata"]["senderAgentId"]
+                recipient_id = res["envelope"]["metadata"]["recipientAgentId"]
+                
+                # Verify admission gate
+                if not _gate_authorized(sender_id, recipient_id, message_id):
+                    raise Refusal("agent admission gate refused participation")
+                    
                 envelope_state = {
                     "sessionId": session_id,
                     "sequence": res["envelope"]["metadata"]["sequence"],
