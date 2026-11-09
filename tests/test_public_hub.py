@@ -115,3 +115,17 @@ class PublicHubTests(unittest.TestCase):
         self.assertNotIn('/dashboard/_headers', self.manifest['routes'])
         self.assertNotIn('/dashboard/404.html', self.manifest['routes'])
         with self.assertRaises(ValueError): assemble(self.output, self.base / 'dashboard-build', 'overwrite-is-forbidden')
+
+    def test_go_entry_is_fixed_navigation_without_new_authority(self):
+        status, headers, body = self.request('/go/?secret=do-not-forward')
+        self.assertEqual(status, 200)
+        self.assertIn(b'Learn the game.', body)
+        self.assertIn(b'https://portal.toadaid.org/play/go-operator/', body)
+        self.assertIn(b'https://portal.toadaid.org/play/go/academy/', body)
+        self.assertNotIn(b'do-not-forward', body)
+        self.assertIn("connect-src 'none'", headers['Content-Security-Policy'])
+        self.assertEqual(self.request('/go/guide.md')[1]['Content-Type'], 'text/markdown; charset=utf-8')
+        self.assertEqual(self.request('/go')[0], 308)
+        self.assertEqual(self.request('/go/', 'POST')[0], 405)
+        self.assertEqual(self.request('/go/api/create', 'POST')[0], 405)
+        self.assertEqual(self.request('/go/api/agents')[0], 404)
