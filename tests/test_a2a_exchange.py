@@ -150,6 +150,38 @@ class A2AExchangeTests(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_journal_recovery_reconstructs_sequence_and_replay(self):
+        req_1 = create_envelope_request("agent-a", "agent-b", 1, "msg-rec-1", "Initial", session_id="session-exchange-1")
+        status_1, resp_1 = self.rpc(self.server_b, req_1)
+        self.assertEqual(status_1, 200)
+
+        # Stop server B and recreate the Journal from the same directory to simulate restart
+        self.server_b.shutdown()
+        self.thread_b.join(timeout=2)
+        self.server_b.server_close()
+        self.journal_b.close()
+        
+        self.journal_b = Journal(self.dir_b)
+        self.server_b = LocalServer(self.journal_b)
+        self.thread_b = threading.Thread(target=self.server_b.serve_forever, daemon=True)
+        self.thread_b.start()
+        
+        # Exact idempotent replay of seq 1 should still be rejected (recovery worked)
+        status_2, resp_2 = self.rpc(self.server_b, req_1)
+        self.assertEqual(status_2, 400)
+        self.assertIn("OUT_OF_ORDER_SEQUENCE", resp_2["error"]["message"])
+        
+        # Out of order attempt (seq 1 again with different message)
+        req_bad = create_envelope_request("agent-a", "agent-b", 1, "msg-rec-1-alt", "Alt", session_id="session-exchange-1")
+        status_bad, resp_bad = self.rpc(self.server_b, req_bad)
+        self.assertEqual(status_bad, 400)
+        self.assertIn("OUT_OF_ORDER_SEQUENCE", resp_bad["error"]["message"])
+
+        # Accept seq 2 normally after recovery
+        req_2 = create_envelope_request("agent-a", "agent-b", 2, "msg-rec-2", "Next", session_id="session-exchange-1")
+        status_3, resp_3 = self.rpc(self.server_b, req_2)
+        self.assertEqual(status_3, 200)
+
     def test_agent_a_to_b_to_a_exchange(self):
         # 1. Agent A sends to Agent B (Sequence 1)
         req_1 = create_envelope_request("agent-a", "agent-b", 1, "msg-1", "Hello from A")

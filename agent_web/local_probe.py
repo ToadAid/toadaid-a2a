@@ -193,9 +193,15 @@ class Journal:
                 event = _parse(line)
             except Refusal as exc:
                 raise Refusal("invalid journal record") from exc
-            if not isinstance(event, dict) or set(event) != {"messageId", "requestHash", "response", "prev", "digest"}:
+            if not isinstance(event, dict):
                 raise Refusal("invalid journal fields")
-            payload = {k: event[k] for k in ("messageId", "requestHash", "response", "prev")}
+            keys = set(event)
+            if keys not in ({"messageId", "requestHash", "response", "prev", "digest"},
+                            {"messageId", "requestHash", "response", "prev", "digest", "envelopeState"}):
+                raise Refusal("invalid journal fields")
+                
+            payload_keys = [k for k in ("messageId", "requestHash", "response", "prev", "envelopeState") if k in event]
+            payload = {k: event[k] for k in payload_keys}
             expected = hashlib.sha256(_canonical(payload)).hexdigest()
             if event["prev"] != self._last_hash or event["digest"] != expected:
                 raise Refusal("journal chain integrity failure")
@@ -204,10 +210,27 @@ class Journal:
                 raise Refusal("journal duplicate messageId")
             if not isinstance(event["requestHash"], str) or not isinstance(event["response"], dict):
                 raise Refusal("invalid journal payload")
+                
+            if "envelopeState" in event:
+                state = event["envelopeState"]
+                if not isinstance(state, dict):
+                    raise Refusal("invalid envelope state")
+                session_id = state.get("sessionId")
+                seq = state.get("sequence")
+                meta_hash = state.get("metadataHash")
+                session = self._sessions.get(session_id)
+                if not session:
+                    raise Refusal("journal references unprovisioned session")
+                if session.get("currentSequence", 0) != seq - 1:
+                    raise Refusal("journal envelope sequence gap or out of order")
+                seen = session.setdefault("seenMessageIds", {})
+                session["currentSequence"] = seq
+                seen[message_id] = meta_hash
+
             self._seen[message_id] = (event["requestHash"], event["response"])
             self._last_hash = expected
 
-    def response_for(self, request, message_id):
+    def response_for(self, request, message_id, envelope_state=None):
         if self._poisoned:
             raise Refusal("journal not available after write failure")
             
@@ -227,7 +250,12 @@ class Journal:
                               "role": "ROLE_AGENT", "parts": [{"text": ACK, "mediaType": "text/plain"}]}}
         event = {"messageId": message_id, "requestHash": request_hash,
                  "response": answer, "prev": self._last_hash}
-        digest = hashlib.sha256(_canonical(event)).hexdigest()
+        if envelope_state:
+            event["envelopeState"] = envelope_state
+            
+        payload_keys = [k for k in ("messageId", "requestHash", "response", "prev", "envelopeState") if k in event]
+        payload = {k: event[k] for k in payload_keys}
+        digest = hashlib.sha256(_canonical(payload)).hexdigest()
         event["digest"] = digest
         line = _canonical(event) + b"\n"
         if os.fstat(self._fd).st_size + len(line) > MAX_JOURNAL_BYTES:
@@ -338,7 +366,13 @@ class LocalHandler(BaseHTTPRequestHandler):
                     raise Refusal(f"envelope refusal: {str(e)}")
                     
                 message_id = res["envelope"]["metadata"]["messageId"]
-                response = self.server.journal.response_for(request, message_id)
+                envelope_state = {
+                    "sessionId": session_id,
+                    "sequence": res["envelope"]["metadata"]["sequence"],
+                    "metadataHash": res["metadataHash"]
+                }
+                
+                response = self.server.journal.response_for(request, message_id, envelope_state)
                 
                 # Atomic state commit upon successful journal write
                 session_manifest.update(test_manifest)
