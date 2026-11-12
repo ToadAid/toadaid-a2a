@@ -96,18 +96,26 @@ def provision_conversation_session(
     max_turns=10,
     participant_a="agent-a",
     participant_b="agent-b",
+    endpoints=None,
 ):
     """Provision sessions.json in an agent journal directory with bounded maxTurns."""
     path = Path(journal_dir)
     path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    
+    parts = {
+        participant_a: {"agentId": participant_a},
+        participant_b: {"agentId": participant_b},
+    }
+    if endpoints:
+        for p, url in endpoints.items():
+            if p in parts:
+                parts[p]["endpointUrl"] = url
+                
     session_config = {
         session_id: {
             "sessionId": session_id,
             "state": "OPEN",
-            "participants": {
-                participant_a: {"agentId": participant_a},
-                participant_b: {"agentId": participant_b},
-            },
+            "participants": parts,
             "maxMessageBytes": 8192,
             "maxTurns": max_turns,
             "currentSequence": 0,
@@ -142,26 +150,29 @@ def post_envelope_rpc(port, payload, cred):
 
 
 def extract_transcript_from_journal(journal_path):
-    """Reconstruct [(speaker, text), ...] from a verified journal file."""
-    lines = Path(journal_path).read_text().splitlines()
-    turns = []
+    """Reconstruct [(speaker, text), ...] from explicitly temporary transcript file."""
+    transcript_path = Path(journal_path).parent / "transcript.jsonl"
+    if not transcript_path.exists():
+        return []
+        
+    lines = transcript_path.read_text().splitlines()
+    turns_with_seq = []
     for line in lines:
         try:
             event = json.loads(line)
-            resp = event.get("response", {})
-            seq = event.get("envelopeState", {}).get("sequence")
-            if seq is None:
-                continue
-            speaker = "Agent A" if seq % 2 == 1 else "Agent B"
-            if resp.get("outbound"):
-                text = resp.get("text", "")
-            else:
-                text = resp.get("receivedText", "")
-            turns.append((speaker, text))
+            turns_with_seq.append((event["seq"], event["speaker"], event["text"]))
         except Exception:
             pass
-    # Sort strictly by sequence order if multiple events
-    return turns
+            
+    seen = set()
+    unique = []
+    for turn in turns_with_seq:
+        if turn[0] not in seen:
+            seen.add(turn[0])
+            unique.append(turn)
+            
+    unique.sort(key=lambda x: x[0])
+    return [(t[1], t[2]) for t in unique]
 
 
 def run_autonomous_conversation_subprocesses(
@@ -171,82 +182,77 @@ def run_autonomous_conversation_subprocesses(
     max_turns=4,
     timeout_seconds=5.0,
 ):
-    """Launch Agent A and Agent B as separate local processes without an external coordinator.
+    """Launch Agent A and Agent B as separate local processes without an external coordinator."""
+    import socket
+    def get_free_port():
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(('', 0))
+            return s.getsockname()[1]
+            
+    port_a = get_free_port()
+    port_b = get_free_port()
+    
+    url_a = f"http://127.0.0.1:{port_a}/a2a"
+    url_b = f"http://127.0.0.1:{port_b}/a2a"
+    endpoints = {"agent-a": url_a, "agent-b": url_b}
+    
+    provision_conversation_session(dir_a, session_id, max_turns, endpoints=endpoints)
+    provision_conversation_session(dir_b, session_id, max_turns, endpoints=endpoints)
 
-    Agent A initiates Turn 1. Turns 2-4 are constructed and dispatched autonomously by the agents.
-    Returns (turns_list, transcript_string).
-    """
     proc_b = subprocess.Popen(
         [
-            sys.executable,
-            "-m",
-            "agent_web.local_probe",
-            "--journal-dir",
-            str(dir_b),
-            "--port",
-            "0",
-            "--agent-id",
-            "agent-b",
+            sys.executable, "-m", "agent_web.local_probe",
+            "--journal-dir", str(dir_b),
+            "--port", str(port_b),
+            "--agent-id", "agent-b",
             "--autonomous",
-            "--session-id",
-            session_id,
+            "--session-id", session_id,
         ],
-        stdout=subprocess.PIPE,
-        text=True,
+        stdout=subprocess.PIPE, text=True,
     )
-    port_b = None
-    for line in proc_b.stdout:
-        if "LOCAL_ONLY_NOT_DEPLOYED" in line:
-            port_b = int(line.split("http://127.0.0.1:")[1].split("/")[0])
-            break
-
-    if port_b is None:
-        proc_b.terminate()
-        raise RuntimeError("Failed to obtain ephemeral port for Agent B")
 
     proc_a = subprocess.Popen(
         [
-            sys.executable,
-            "-m",
-            "agent_web.local_probe",
-            "--journal-dir",
-            str(dir_a),
-            "--port",
-            "0",
-            "--agent-id",
-            "agent-a",
-            "--peer-url",
-            f"http://127.0.0.1:{port_b}/a2a",
+            sys.executable, "-m", "agent_web.local_probe",
+            "--journal-dir", str(dir_a),
+            "--port", str(port_a),
+            "--agent-id", "agent-a",
             "--autonomous",
             "--initiate",
-            "--session-id",
-            session_id,
+            "--session-id", session_id,
         ],
-        stdout=subprocess.PIPE,
-        text=True,
+        stdout=subprocess.PIPE, text=True,
     )
-    port_a = None
-    for line in proc_a.stdout:
-        if "LOCAL_ONLY_NOT_DEPLOYED" in line:
-            port_a = int(line.split("http://127.0.0.1:")[1].split("/")[0])
-            break
-
-    if port_a is None:
-        proc_a.terminate()
-        proc_b.terminate()
-        raise RuntimeError("Failed to obtain ephemeral port for Agent A")
 
     try:
-        # Wait for both agents to complete max_turns in their journals
         deadline = time.time() + timeout_seconds
         journal_a = Path(dir_a) / "local-probe-events.jsonl"
         journal_b = Path(dir_b) / "local-probe-events.jsonl"
+        
         while time.time() < deadline:
-            lines_a = journal_a.read_text().splitlines() if journal_a.exists() else []
-            lines_b = journal_b.read_text().splitlines() if journal_b.exists() else []
-            if len(lines_a) >= max_turns and len(lines_b) >= max_turns:
+            def count_delivered(journal_path):
+                if not journal_path.exists(): return 0
+                lines = journal_path.read_text().splitlines()
+                c = 0
+                for line in lines:
+                    try:
+                        event = json.loads(line)
+                        if event.get("response", {}).get("state") == "DELIVERED":
+                            c += 1
+                        elif event.get("response", {}).get("replied") is True:
+                            c += 1
+                    except Exception: pass
+                return c
+                
+            c_a = count_delivered(journal_a)
+            c_b = count_delivered(journal_b)
+            # A sends 2 turns, B sends 2 turns. So each has 2 DELIVERED outbounds and 2 replies. 4 events total per agent.
+            if c_a >= max_turns and c_b >= max_turns:
                 break
             time.sleep(0.05)
+            
+        if c_a < max_turns or c_b < max_turns:
+            raise RuntimeError(f"Timeout waiting for conversation to complete (A: {c_a}, B: {c_b})")
 
         turns = extract_transcript_from_journal(journal_a)
         transcript = format_transcript(turns)

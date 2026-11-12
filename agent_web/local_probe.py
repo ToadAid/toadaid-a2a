@@ -13,6 +13,7 @@ import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 import stat
+import sys
 import threading
 import time
 from urllib.parse import urlsplit
@@ -230,6 +231,8 @@ def validate_destination_url(url):
         raise Refusal("destination must specify a valid port")
     if parsed.path.rstrip("/") != RPC_PATH:
         raise Refusal("invalid RPC destination path")
+    if parsed.query or parsed.fragment:
+        raise Refusal("query strings and fragments in destination URL refused")
     return url
 
 
@@ -405,12 +408,17 @@ class Journal:
             return old_response
         # Generate response using handler if provided, else default ACK
         text_content = reply_text if reply_text is not None else ACK
-        answer = {"message": {"messageId": str(uuid.uuid4()), "contextId": str(uuid.uuid4()),
+        msg_id_uuid = str(uuid.uuid4())
+        ctx_id_uuid = str(uuid.uuid4())
+        full_answer = {"message": {"messageId": msg_id_uuid, "contextId": ctx_id_uuid,
                               "role": "ROLE_AGENT", "parts": [{"text": text_content, "mediaType": "text/plain"}]}}
-        if incoming_text is not None:
-            answer["receivedText"] = incoming_text
+        
+        journal_answer = {"message": {"messageId": msg_id_uuid, "contextId": ctx_id_uuid, "role": "ROLE_AGENT"}}
+        if reply_text is not None:
+            journal_answer["replied"] = True
+            
         event = {"messageId": message_id, "requestHash": request_hash,
-                 "response": answer, "prev": self._last_hash}
+                 "response": journal_answer, "prev": self._last_hash}
         if envelope_state:
             event["envelopeState"] = envelope_state
             
@@ -430,8 +438,8 @@ class Journal:
             self._poisoned = True
             raise Refusal("journal write refused") from exc
         self._last_hash = digest
-        self._seen[message_id] = (request_hash, answer)
-        return answer
+        self._seen[message_id] = (request_hash, full_answer)
+        return full_answer
 
     def record_outbound(self, session_id, envelope, metadata_hash=None):
         """Legitimate local outgoing-state mechanism: records outbound envelope in session and journal."""
@@ -467,9 +475,7 @@ class Journal:
         }
 
         request_hash = hashlib.sha256(_canonical(envelope)).hexdigest()
-        content_parts = envelope.get("contentParts", {})
-        text_content = content_parts.get("text", "") if isinstance(content_parts, dict) else ""
-        answer = {"outbound": True, "messageId": message_id, "text": text_content}
+        answer = {"outbound": True, "messageId": message_id, "state": "ATTEMPTED"}
         event = {
             "messageId": message_id,
             "requestHash": request_hash,
@@ -499,6 +505,43 @@ class Journal:
         session["currentSequence"] = seq
         session.setdefault("seenMessageIds", {})[message_id] = metadata_hash
         return event
+
+    def record_outbound_result(self, message_id, success, error_msg=None):
+        if self._poisoned:
+            raise Refusal("journal not available")
+        if message_id not in self._seen:
+            raise Refusal("unknown messageId for result")
+        
+        request_hash, old_answer = self._seen[message_id]
+        answer = {"outbound": True, "messageId": message_id, "state": "DELIVERED" if success else "FAILED"}
+        if error_msg:
+            answer["error"] = error_msg
+            
+        event = {
+            "messageId": message_id + "-result",
+            "requestHash": request_hash,
+            "response": answer,
+            "prev": self._last_hash,
+        }
+        
+        payload_keys = ["messageId", "requestHash", "response", "prev"]
+        payload = {k: event[k] for k in payload_keys}
+        digest = hashlib.sha256(_canonical(payload)).hexdigest()
+        event["digest"] = digest
+        line = _canonical(event) + b"\n"
+
+        if os.fstat(self._fd).st_size + len(line) > MAX_JOURNAL_BYTES:
+            raise Refusal("journal size bound exceeded")
+        try:
+            if os.write(self._fd, line) != len(line):
+                raise OSError("partial journal write")
+            os.fsync(self._fd)
+        except OSError as exc:
+            self._poisoned = True
+            raise Refusal("journal write refused") from exc
+
+        self._last_hash = digest
+        self._seen[message_id] = (request_hash, answer)
 
     def close(self):
         if not self._closed:
@@ -530,7 +573,7 @@ class LocalServer(HTTPServer):
         self.agent_id = agent_id
         self.peer_url = peer_url
         self.autonomous = autonomous
-        self.transcript = []
+        self.transcript_path = self.journal._path.parent / "transcript.jsonl"
         super().__init__(("127.0.0.1", port), LocalHandler)
         if self.server_address[0] != "127.0.0.1":
             self.server_close()
@@ -548,10 +591,16 @@ class LocalServer(HTTPServer):
     ):
         if not self.agent_id:
             raise Refusal("server has no configured agent_id for outbound sends")
-        url = dest_url or self.peer_url
-        if not url:
-            raise Refusal("no destination URL configured")
-
+        
+        session_manifest = self.journal.get_session(session_id)
+        if not session_manifest:
+            raise Refusal("session not provisioned")
+            
+        participant = session_manifest.get("participants", {}).get(recipient_id)
+        if not participant or "endpointUrl" not in participant:
+            raise Refusal("unprovisioned peer")
+            
+        url = participant["endpointUrl"]
         validated_url = validate_destination_url(url)
 
         from agent_web.conversation import create_envelope_turn, post_envelope_rpc
@@ -576,17 +625,20 @@ class LocalServer(HTTPServer):
         # Record outbound in local journal
         self.journal.record_outbound(session_id, req["params"]["envelope"])
         speaker_label = "Agent A" if self.agent_id == "agent-a" else "Agent B"
-        self.transcript.append((speaker_label, text))
+        with open(self.transcript_path, "a") as f:
+            f.write(json.dumps({"speaker": speaker_label, "text": text, "seq": seq}) + "\n")
 
         parsed = urlsplit(validated_url)
         try:
             status, resp = post_envelope_rpc(parsed.port, req, cred=cred)
+            if status != 200:
+                err = resp.get("error", {}).get("message", "outbound delivery refused")
+                raise Refusal(f"outbound delivery failed: {err}")
         except Exception as exc:
+            self.journal.record_outbound_result(msg_id, False, str(exc))
             raise Refusal(f"outbound delivery failed: {exc}") from exc
             
-        if status != 200:
-            err = resp.get("error", {}).get("message", "outbound delivery refused")
-            raise Refusal(f"outbound delivery failed: {err}")
+        self.journal.record_outbound_result(msg_id, True)
         return status, resp
 
     def initiate_conversation(
@@ -746,7 +798,8 @@ class LocalHandler(BaseHTTPRequestHandler):
                 
                 # Record in server transcript
                 speaker_label = "Agent A" if sender_id == "agent-a" else "Agent B"
-                self.server.transcript.append((speaker_label, incoming_text))
+                with open(self.server.transcript_path, "a") as f:
+                    f.write(json.dumps({"speaker": speaker_label, "text": incoming_text, "seq": res["envelope"]["metadata"]["sequence"]}) + "\n")
             else:
                 response = self.server.journal.response_for(request, message_id)
                 
@@ -762,23 +815,20 @@ class LocalHandler(BaseHTTPRequestHandler):
             turn_idx = res["envelope"]["metadata"]["sequence"]
             max_turns = session_manifest.get("maxTurns", 0)
             if turn_idx < max_turns and reply_text:
-                reply_to_url = env_dict.get("metadata", {}).get("replyToUrl") or getattr(self.server, "peer_url", None)
-                if reply_to_url:
-                    def dispatch_next():
-                        time.sleep(0.01)
-                        try:
-                            self.server.send_outbound_turn(
-                                session_id=session_id,
-                                text=reply_text,
-                                seq=turn_idx + 1,
-                                recipient_id=sender_id,
-                                in_reply_to=message_id,
-                                correlation_id=correlation_id,
-                                dest_url=reply_to_url
-                            )
-                        except Exception:
-                            pass
-                    threading.Thread(target=dispatch_next, daemon=True).start()
+                def dispatch_next():
+                    time.sleep(0.01)
+                    try:
+                        self.server.send_outbound_turn(
+                            session_id=session_id,
+                            text=reply_text,
+                            seq=turn_idx + 1,
+                            recipient_id=sender_id,
+                            in_reply_to=message_id,
+                            correlation_id=correlation_id
+                        )
+                    except Exception as e:
+                        print(f"Autonomous delivery failed: {e}", file=sys.stderr)
+                threading.Thread(target=dispatch_next, daemon=True).start()
 
     def do_PUT(self):
         self._send(405, {"error": "method not allowed"})
@@ -822,8 +872,8 @@ def main(argv=None):
                     time.sleep(0.05)
                     try:
                         server.initiate_conversation(session_id=options.session_id, dest_url=options.peer_url)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        print(f"Initiation failed: {e}", file=sys.stderr)
                 threading.Thread(target=do_init, daemon=True).start()
             server.serve_forever(poll_interval=0.05)
     finally:

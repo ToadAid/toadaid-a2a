@@ -62,12 +62,15 @@ class TwoFrogsConversationTests(unittest.TestCase):
         # Verify both journals recorded verified hash-chained evidence of all 4 turns
         lines_a = (self.dir_a / "local-probe-events.jsonl").read_text().splitlines()
         lines_b = (self.dir_b / "local-probe-events.jsonl").read_text().splitlines()
-        self.assertEqual(len(lines_a), 4)
-        self.assertEqual(len(lines_b), 4)
+        
+        events_a = [json.loads(line) for line in lines_a if "envelopeState" in json.loads(line)]
+        events_b = [json.loads(line) for line in lines_b if "envelopeState" in json.loads(line)]
+        
+        self.assertEqual(len(events_a), 4)
+        self.assertEqual(len(events_b), 4)
 
         # Verify sequence numbers in journal states
-        for idx, line in enumerate(lines_a, start=1):
-            event = json.loads(line)
+        for idx, event in enumerate(events_a, start=1):
             self.assertEqual(event["envelopeState"]["sequence"], idx)
             self.assertEqual(event["envelopeState"]["sessionId"], "session-pond-1")
 
@@ -176,26 +179,25 @@ class TwoFrogsConversationTests(unittest.TestCase):
 
     def test_failed_outbound_delivery_handled_safely(self):
         """Outbound delivery to an unreachable port raises controlled Refusal and preserves server integrity."""
+        unreachable_url = "http://127.0.0.1:59999/a2a"
+        provision_conversation_session(self.dir_a, "session-pond-1", max_turns=4, endpoints={"agent-b": unreachable_url})
         journal_a = Journal(self.dir_a)
         server_a = LocalServer(journal_a, handler=pond_handler_a, agent_id="agent-a")
 
         try:
-            # Point to an unused local port
-            unreachable_url = "http://127.0.0.1:59999/a2a"
             with self.assertRaisesRegex(Refusal, "outbound delivery failed"):
                 server_a.send_outbound_turn(
                     session_id="session-pond-1",
                     text="Hello to nowhere",
                     seq=1,
                     recipient_id="agent-b",
-                    dest_url=unreachable_url,
                 )
         finally:
             server_a.server_close()
             journal_a.close()
-
     def test_unknown_destination_refused(self):
         """Non-loopback and malformed destination URLs are refused strictly before network I/O."""
+        from agent_web.local_probe import validate_destination_url
         with self.assertRaisesRegex(Refusal, "destination must be explicit loopback"):
             validate_destination_url("http://example.com/a2a")
 
@@ -204,6 +206,9 @@ class TwoFrogsConversationTests(unittest.TestCase):
 
         with self.assertRaisesRegex(Refusal, "invalid RPC destination path"):
             validate_destination_url("http://127.0.0.1:8080/api/keys")
+
+        with self.assertRaisesRegex(Refusal, "query strings and fragments"):
+            validate_destination_url("http://127.0.0.1:8080/a2a?redirect=1")
 
         with self.assertRaisesRegex(Refusal, "userinfo in destination URL refused"):
             validate_destination_url("http://user:pass@127.0.0.1:8080/a2a")
@@ -410,6 +415,36 @@ class TwoFrogsConversationTests(unittest.TestCase):
             thread_b.join(timeout=2)
             server_b.server_close()
             journal_b.close()
+
+    def test_journal_privacy_preserved(self):
+        """Distinctive private message string does not appear in journal bytes."""
+        distinctive_text = "SECRET_PRIVATE_STRING_12345"
+        unreachable_url = "http://127.0.0.1:59999/a2a"
+        provision_conversation_session(self.dir_a, "session-priv", max_turns=4, endpoints={"agent-b": unreachable_url})
+        journal_a = Journal(self.dir_a)
+        server_a = LocalServer(journal_a, handler=pond_handler_a, agent_id="agent-a")
+
+        try:
+            with self.assertRaisesRegex(Refusal, "outbound delivery failed"):
+                server_a.send_outbound_turn(
+                    session_id="session-priv",
+                    text=distinctive_text,
+                    seq=1,
+                    recipient_id="agent-b",
+                )
+        finally:
+            server_a.server_close()
+            journal_a.close()
+
+        journal_bytes = (self.dir_a / "local-probe-events.jsonl").read_bytes()
+        self.assertNotIn(distinctive_text.encode("utf-8"), journal_bytes)
+
+    def test_incomplete_conversation_fails(self):
+        """Do not report a successful conversation when fewer than the required turns completed (timeout)."""
+        with self.assertRaisesRegex(RuntimeError, "Timeout waiting for conversation to complete"):
+            run_autonomous_conversation_subprocesses(
+                self.dir_a, self.dir_b, session_id="session-pond-1", max_turns=100, timeout_seconds=0.5
+            )
 
 
 if __name__ == "__main__":

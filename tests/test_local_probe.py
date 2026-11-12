@@ -97,10 +97,14 @@ class RealLoopbackTests(unittest.TestCase):
     def test_restart_reconstructs_reply_and_detects_replay(self):
         self.assertEqual(self.rpc()[0], 200)
         expected = self.rpc()[2]
+        expected_result = expected["result"]
+        if "parts" in expected_result["message"]:
+            del expected_result["message"]["parts"]
+            
         self.journal.close()  # simulate stopped process before journal replay
         second = Journal(self.dir)
         try:
-            self.assertEqual(second.response_for(req(), "m-1"), expected["result"])
+            self.assertEqual(second.response_for(req(), "m-1"), expected_result)
             with self.assertRaisesRegex(Refusal, "conflicting replay"):
                 second.response_for(req(content="no"), "m-1")
         finally:
@@ -110,7 +114,7 @@ class RealLoopbackTests(unittest.TestCase):
         self.rpc()
         path = self.dir / "local-probe-events.jsonl"
         raw = path.read_bytes()
-        path.write_bytes(raw.replace(b"Local-only", b"Tamper-only"))
+        path.write_bytes(raw.replace(b"ROLE_AGENT", b"ROLE_TAMPER"))
         self.journal.close()
         with self.assertRaisesRegex(Refusal, "integrity failure"):
             Journal(self.dir)
